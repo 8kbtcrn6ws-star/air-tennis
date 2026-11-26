@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#04060f">
+  <title>Air Tennis · Phone</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="phone.css">
+  <script type="importmap">
+  { "imports": { "peerjs": "https://cdn.jsdelivr.net/npm/peerjs@1.5.5/+esm" } }
+  </script>
+  <script src="phone.js" type="module"></script>
+</head>
+<body data-view="join">
+  <header class="top">
+    <h1><span class="ball" aria-hidden="true"></span>Air <b>Tennis</b></h1>
+    <div class="chips">
+      <span class="chip" id="chip-link" data-state="off">TV</span>
+      <span class="chip" id="chip-sensor" data-state="off">Sensors</span>
+      <span class="chip" id="chip-view" data-state="off" hidden>In view</span>
+    </div>
+  </header>
+
+  <!-- 1. join -->
+  <section id="v-join" class="view">
+    <h2>Connect to the TV</h2>
+    <p class="lead">Type the 4-letter code on the TV, or scan its QR code.</p>
+    <form id="join-form" autocomplete="off">
+      <input id="code" name="code" inputmode="text" autocapitalize="characters" maxlength="4" placeholder="ABCD" aria-label="Room code" spellcheck="false">
+      <button class="btn" type="submit">Connect</button>
+    </form>
+    <p id="join-err" class="err" role="alert"></p>
+  </section>
+
+  <!-- 2. choose how to play -->
+  <section id="v-choose" class="view" hidden>
+    <h2>How do you want to play?</h2>
+    <button class="choice" id="pick-motion">
+      <span class="choice-ico" aria-hidden="true">🎾</span>
+      <span><strong>Swing your phone</strong><small>Hold the phone like a racket handle and swing it. Best feel. Uses the motion sensors.</small></span>
+    </button>
+    <button class="choice" id="pick-camera">
+      <span class="choice-ico" aria-hidden="true">📷</span>
+      <span><strong>Phone on table</strong><small>Stand the phone up facing you and swing your hand. Uses the front camera; video never leaves the phone.</small></span>
+    </button>
+    <p id="choose-err" class="err" role="alert"></p>
+  </section>
+
+  <!-- 3. setup / play -->
+  <section id="v-play" class="view" hidden>
+    <div class="cam" id="cam-wrap" hidden>
+      <video id="video" playsinline muted autoplay></video>
+      <canvas id="overlay"></canvas>
+      <p class="cam-note">Camera stays on this phone. Nothing is uploaded or saved.</p>
+    </div>
+    <div class="cal">
+      <p class="step-label" id="step-label">Setup</p>
+      <h2 id="step-title">Getting ready…</h2>
+      <p class="lead" id="step-help"></p>
+      <div class="meter" aria-hidden="true"><div class="meter-track"><div id="meter-dot" class="meter-dot"></div></div></div>
+      <p class="swing-read" id="swing-read"></p>
+    </div>
+    <div class="remote" id="remote">
+      <div class="grid4">
+        <button class="mini" data-menu="match">Rally vs CPU</button>
+        <button class="mini" data-menu="practice">Ball Machine</button>
+        <button class="mini" data-menu="target">Target</button>
+        <button class="mini" data-menu="rally">Rally Challenge</button>
+      </div>
+      <div class="row">
+        <button class="mini ghost" data-menu="pause">Pause</button>
+        <button class="mini ghost" data-menu="menu">TV menu</button>
+        <button class="mini ghost" id="recal">Redo setup</button>
+      </div>
+      <label class="sens">Swing sensitivity
+        <select id="sens">
+          <option value="easier">Easier</option>
+          <option value="normal" selected>Normal</option>
+          <option value="harder">Harder</option>
+        </select>
+      </label>
+    </div>
+  </section>
+</body>
+</html>

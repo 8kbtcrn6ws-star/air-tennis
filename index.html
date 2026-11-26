@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Air Tennis</title>
+  <meta name="description" content="Air Tennis: swing your hand at your phone camera and play tennis on the TV.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <meta property="og:image" content="art/air-tennis-cover.webp">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+      "peerjs": "https://cdn.jsdelivr.net/npm/peerjs@1.5.5/+esm",
+      "qrcode-generator": "https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.mjs"
+    }
+  }
+  </script>
+  <script src="game.js" type="module"></script>
+</head>
+<body data-screen="loading">
+  <canvas id="gl" aria-hidden="true"></canvas>
+  <div class="vignette" aria-hidden="true"></div>
+
+  <!-- MAIN MENU -->
+  <section id="menu" class="screen" aria-label="Main menu">
+    <div class="menu-left">
+      <h1 class="wordmark"><span class="ball-glyph" aria-hidden="true"></span>Air <b>Tennis</b></h1>
+      <p class="tagline">Swing your phone like a racket, or stand it on the table and swing your hand.</p>
+      <div class="modes" role="list">
+        <button class="mode" data-nav data-mode="match" role="listitem">
+          <span class="mode-ico" aria-hidden="true">⚑</span>
+          <span class="mode-txt"><strong>Rally vs CPU</strong><small>A real scored match against the computer.</small></span>
+        </button>
+        <button class="mode" data-nav data-mode="practice" role="listitem">
+          <span class="mode-ico" aria-hidden="true">◎</span>
+          <span class="mode-txt"><strong>Ball Machine</strong><small>A robot feeds you balls. Learn the timing.</small></span>
+        </button>
+        <button class="mode" data-nav data-mode="target" role="listitem">
+          <span class="mode-ico" aria-hidden="true">◉</span>
+          <span class="mode-txt"><strong>Target Practice</strong><small>Hit the glowing rings. 60 seconds on the clock.</small></span>
+        </button>
+        <button class="mode" data-nav data-mode="rally" role="listitem">
+          <span class="mode-ico" aria-hidden="true">∞</span>
+          <span class="mode-txt"><strong>Rally Challenge</strong><small>Keep the ball going. One miss and it's over.</small></span>
+        </button>
+      </div>
+      <div class="settings-row">
+        <button class="chip-btn" data-nav data-set="games">Match: <b id="set-games">first to 3 games</b></button>
+        <button class="chip-btn" data-nav data-set="flight">Ball flight: <b id="set-flight">Medium</b></button>
+        <button class="chip-btn" data-nav data-set="sens">Swing sensitivity: <b id="set-sens">Normal</b></button>
+        <button class="chip-btn" data-nav data-set="assist">Aim help: <b id="set-assist">On</b></button>
+        <button class="chip-btn" data-nav data-set="gfx">Graphics: <b id="set-gfx">High</b></button>
+        <button class="chip-btn" data-nav data-set="sound">Sound: <b id="set-sound">On</b></button>
+        <button class="chip-btn" data-nav data-set="music">Music: <b id="set-music">Off</b></button>
+      </div>
+      <dl class="stats">
+        <div><dt>Best rally</dt><dd id="st-rally">0</dd></div>
+        <div><dt>Target best</dt><dd id="st-target">0</dd></div>
+        <div><dt>Match wins</dt><dd id="st-wins">0</dd></div>
+        <div><dt>Missed shots</dt><dd id="st-missed">0</dd></div>
+      </dl>
+    </div>
+    <aside class="phone-card" aria-label="Phone controller">
+      <h2>Phone controller</h2>
+      <div class="qr-wrap"><div id="qr" class="qr is-empty" aria-hidden="true"></div></div>
+      <p class="code-line">Code <span id="code" class="code">····</span></p>
+      <p id="link-status" class="chip" data-state="wait">Starting phone link…</p>
+      <ol class="how">
+        <li>Scan with your phone camera, or open <b id="phone-url">phone.html</b> and type the code.</li>
+        <li><b>Swing your phone:</b> hold it like a racket handle and swing. <b>Phone on table:</b> stand it facing you and swing your hand.</li>
+        <li>Follow the quick setup on the phone, then play.</li>
+      </ol>
+      <p class="kb-hint">No phone? Use <kbd>←</kbd><kbd>→</kbd> to move and <kbd>Space</kbd> to swing, or the mouse.</p>
+    </aside>
+  </section>
+
+  <!-- CALIBRATION -->
+  <section id="cal" class="screen overlay" aria-label="Camera setup" hidden>
+    <div class="panel cal-panel">
+      <h2>Racket setup</h2>
+      <p class="sub" id="cal-sub">Follow the steps on your phone. This screen shows what it picks up.</p>
+      <ol class="steps" id="cal-steps">
+        <li data-step="1"><span class="tick"></span>Phone connected</li>
+        <li data-step="2"><span class="tick"></span><span data-cam>Camera on and you're in view</span><span data-mot>Motion sensors on</span></li>
+        <li data-step="3"><span class="tick"></span><span data-cam>Raise your racket hand</span><span data-mot>Hold the phone like a racket</span></li>
+        <li data-step="4"><span class="tick"></span><span data-cam>Move your hand left, then right</span><span data-mot>Tilt left, then right to aim</span></li>
+        <li data-step="5"><span class="tick"></span>Swing a forehand to confirm</li>
+      </ol>
+      <div class="meter" aria-hidden="true"><div class="meter-track"><div id="cal-dot" class="meter-dot"></div></div><span>Left</span><span>Right</span></div>
+      <p id="cal-msg" class="cal-msg">Waiting for your phone…</p>
+      <div class="row">
+        <button class="btn" data-nav data-act="cal-done">Done</button>
+        <button class="btn ghost" data-nav data-act="cal-skip">Skip, use keyboard</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- HUD -->
+  <section id="hud" class="hud" hidden>
+    <div class="hud-left">
+      <div class="hud-label">Time</div>
+      <div class="timer" id="timer">0:00</div>
+    </div>
+    <div class="hud-right">
+      <div class="hud-label" id="score-label">Score</div>
+      <div class="scoreboard" id="board"></div>
+    </div>
+    <div class="chip input-chip" id="input-chip" data-state="kb">Keyboard</div>
+    <div class="banner" id="banner" aria-live="polite"></div>
+    <div class="callout" id="callout"></div>
+    <div class="hint" id="hint"></div>
+  </section>
+
+  <!-- PAUSE -->
+  <section id="pause" class="screen overlay" aria-label="Paused" hidden>
+    <div class="panel small">
+      <h2 id="pause-title">Paused</h2>
+      <p id="pause-msg" class="sub"></p>
+      <div class="col">
+        <button class="btn" data-nav data-act="resume">Resume</button>
+        <button class="btn ghost" data-nav data-act="restart">Restart</button>
+        <button class="btn ghost" data-nav data-act="menu">Main menu</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- RESULTS -->
+  <section id="results" class="screen overlay" aria-label="Results" hidden>
+    <div class="panel small">
+      <p class="eyebrow" id="res-eyebrow">Match over</p>
+      <h2 id="res-title">You win!</h2>
+      <dl class="res-stats" id="res-stats"></dl>
+      <div class="col">
+        <button class="btn" data-nav data-act="restart">Play again</button>
+        <button class="btn ghost" data-nav data-act="menu">Main menu</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="loading" class="loading">Loading court…</div>
+</body>
+</html>
