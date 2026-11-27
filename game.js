@@ -521,24 +521,29 @@ function sendTo(from, msg) {
   if (from === "local") { window.__airTennis.outbox.push(msg); return; }
   host?.sendTo?.(from, msg);
 }
-// Hit timing for body-camera swings. The phone reports `ago`: ms since the contact moment it saw on camera (it detects
-// the swing a little after the arm passes the ball). Judge the swing as if it arrived then: rewind the ball along
-// its flight by `ago` (clamped to 0..150 ms) while the timing window is checked, put the ball back, and schedule the
-// hit for the real moment. No `ago` (keyboard, old phones, tests) = judged on arrival, as before.
-const MAX_BACKDATE_S = 0.15;
+// Hit timing for body-camera swings. The phone reports `ago`: ms since the contact moment it saw on camera. Positive =
+// it detected the swing after the arm passed the contact point; negative = it caught the swing early (onset) and the
+// contact is still ahead by -ago ms. Judge the swing as if it happened at that contact: move the ball along its flight
+// by `ago` (back up to MAX_BACKDATE_S, forward up to MAX_LEAD_S) while the timing window is checked, put the ball back,
+// and schedule the hit for when the ball really gets there (never later). No `ago` (keyboard, tests) = judged on arrival.
+const MAX_BACKDATE_S = 0.2;
+const MAX_LEAD_S = 0.15;
 function backdatedSwing(m, id) {
-  const back = Math.min(MAX_BACKDATE_S, Math.max(0, (Number(m.ago) || 0) / 1000));
+  const back = Math.min(MAX_BACKDATE_S, Math.max(-MAX_LEAD_S, (Number(m.ago) || 0) / 1000));
   const b = sim.ball;
   const swing = () => sim.swing(m.dir, m.spd, "phone", id, { kind: m.k, lift: m.lift });
   if (!back || !b || !b.live || sim.phase !== "rally" || sim.pending) return swing();
+  const real = sim.contact?.(sim.players[id]); // when the real ball reaches this player's hitting plane
   const saved = { x: b.x, y: b.y, z: b.z, vy: b.vy };
   b.x -= b.vx * back;
   b.z -= b.vz * back;
-  const y = b.y - b.vy * back - 0.5 * 9.8 * back * back; // ballistic rewind; skipped if it would cross a bounce
+  const y = b.y - b.vy * back - 0.5 * 9.8 * back * back; // ballistic; skipped if it would cross a bounce
   if (y > 0.15 && b.y > 0.15) { b.y = y; b.vy += 9.8 * back; }
   let r;
   try { r = swing(); } finally { Object.assign(b, saved); }
-  if (r?.result === "hit" && sim.pending) sim.pending.at = Math.max(sim.time, sim.pending.at - back);
+  // r.tc was measured on the moved ball; the hit lands when the real ball reaches the hitting plane (now, if it passed).
+  const tcReal = Number.isFinite(real?.tc) ? real.tc : (r?.tc ?? 0) - back;
+  if (r?.result === "hit" && sim.pending) sim.pending.at = sim.time + Math.max(0, tcReal);
   return r ? { ...r, backdated: Math.round(back * 1000) } : r;
 }
 

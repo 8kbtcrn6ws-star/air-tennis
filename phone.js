@@ -15,6 +15,10 @@ const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/v
 const MP_WASM = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/wasm`;
 const POSE_MODEL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 const NOCAM = TEST && params.get("nocam") === "1"; // tests: feed synthetic poses through __phone.feedPoses
+// Latency debug (tests, or ?lat=1): per-stage timings in window.__phone.lat. Off for players: nothing is recorded.
+const LAT = TEST || params.get("lat") === "1";
+const lat = LAT ? { cap: [], infer: [], track: [], send: [], e2e: [], src: { capture: 0, presentation: 0, callback: 0 } } : null;
+const latPush = (k, v) => { if (lat && Number.isFinite(v)) { lat[k].push(Math.round(v * 10) / 10); if (lat[k].length > 600) lat[k].shift(); } };
 
 const client = new PhoneClient();
 const sent = [];
@@ -213,18 +217,33 @@ function nextPoseFrame() {
   else requestAnimationFrame(() => poseLoop(null));
 }
 let lastFrameT = 0;
+let frameT0 = 0; // capture time (performance.now clock) of the frame being processed, for the latency debug
+// Frame time: when the camera captured it (rVFC captureTime; Chrome/Android), else when it was handed to the
+// compositor (presentationTime; earlier than this callback), else now. Out-of-range values (other clocks, stale) are ignored.
+function frameTime(meta, now) {
+  const ok = (v) => v > 0 && v <= now && now - v < 500;
+  if (ok(meta?.captureTime)) { if (lat) lat.src.capture++; return meta.captureTime; }
+  if (ok(meta?.presentationTime)) { if (lat) lat.src.presentation++; return meta.presentationTime; }
+  if (lat) lat.src.callback++;
+  return now;
+}
 function poseLoop(meta) {
   if (!body.landmarker || !video || state.mode !== "body") return;
   const now = performance.now();
   if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
     // Swing speeds and `ago` use when the frame was captured, not when we got round to processing it.
-    let ft = meta?.captureTime > 0 && meta.captureTime <= now && now - meta.captureTime < 500 ? meta.captureTime : now;
+    let ft = frameTime(meta, now);
+    if (lat && meta?.captureTime > 0) latPush("cap", now - meta.captureTime);
     ft = Math.max(ft, lastFrameT + 1);
     lastFrameT = ft;
+    frameT0 = ft;
     let res = null;
-    try { res = body.landmarker.detectForVideo(video, now); } catch (e) { state.error = String(e?.message || e); }
-    handlePoses(res?.landmarks || [], ft / SLOWMO, res?.worldLandmarks, (performance.now() - ft) / SLOWMO);
+    const t0 = performance.now();
+    try { res = body.landmarker.detectForVideo(video, ft); } catch (e) { state.error = String(e?.message || e); }
+    const t1 = performance.now();
+    handlePoses(res?.landmarks || [], ft / SLOWMO, res?.worldLandmarks, (t1 - ft) / SLOWMO);
+    if (lat) { latPush("infer", t1 - t0); latPush("track", performance.now() - t1); }
   }
   nextPoseFrame();
 }
@@ -264,7 +283,10 @@ function handlePoses(list, now, worlds, procMs = 0) {
       if (body.cal === "swing" && (sw.kind === "fh" || sw.kind === "bh")) body.swingDone[s] = true;
       if (body.cal === "done") {
         body.swingN[s] = (body.swingN[s] || 0) + 1;
-        send({ t: "swing", s, dir: sw.dir, spd: sw.power, k: sw.kind, lift: sw.lift, ago: Math.min(300, Math.round(sw.ago + procMs)), c: sw.c, n: body.swingN[s] });
+        const ts = lat ? performance.now() : 0;
+        // Sent at once from this frame's callback: no batching, throttling or waiting for a paint.
+        send({ t: "swing", s, dir: sw.dir, spd: sw.power, k: sw.kind, lift: sw.lift, ago: Math.max(-150, Math.min(300, Math.round(sw.ago + procMs))), c: sw.c, n: body.swingN[s] });
+        if (lat) { const te = performance.now(); latPush("send", te - ts); if (frameT0) latPush("e2e", te - frameT0); }
         $("swing-read").textContent = `P${slotName(s)}: ${{ fh: "forehand", bh: "backhand", oh: "overhead", sv: "serve" }[sw.kind]} · power ${Math.round(sw.power * 100)}%`;
         buzz(15);
       } else $("swing-read").textContent = `${{ fh: "Forehand", bh: "Backhand", oh: "Overhead", sv: "Serve" }[sw.kind]} detected`;
@@ -340,7 +362,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 $("start-btn").addEventListener("click", () => startBody());
 
 // Hidden test hook (not shown anywhere on the page).
-window.__phone = { state, sent, join, body, startBody, feedPoses: (list, t, worlds) => handlePoses(list, t ?? performance.now(), worlds), onMessage: (m) => client.emit("message", m) };
+window.__phone = { state, sent, join, body, startBody, lat, feedPoses: (list, t, worlds) => handlePoses(list, t ?? performance.now(), worlds), onMessage: (m) => client.emit("message", m) };
 
 const initial = codeFromLocation();
 if (initial) { $("code").value = initial; join(initial); }

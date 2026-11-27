@@ -48,7 +48,7 @@ export function personCheck(lms, minVis = 0.5, world = null, opts = {}) {
 }
 export function personFrom(lms, minVis = 0.5, world = null, opts = {}) { return personCheck(lms, minVis, world, opts).person; }
 
-export const POSE_THRESH = { easier: 4.5, normal: 6, harder: 8 }; // body units per second
+export const POSE_THRESH = { easier: 3.8, normal: 4.5, harder: 6 }; // body units per second (v3: was 4.5 / 6 / 8)
 
 // One Euro filter (Casiez et al. 2012): smooths jitter when still, follows fast moves with little lag. t in ms.
 export function createOneEuro({ minCutoff = 1.5, beta = 0.5, dCutoff = 1.0 } = {}) {
@@ -82,7 +82,12 @@ export function createPoseSwingDetector(opts = {}) {
     histGap: opts.histGap ?? 80,      // a wrist sample after missed frames spanning longer than this starts a fresh velocity history
     fillMs: opts.fillMs ?? 600,       // a hidden wrist is bridged from the visible elbow for up to this long
     readyHold: opts.readyHold ?? 120, // ms of a calm arm in front of the body before a new wind-up counts
-    minDisp: opts.minDisp ?? 0.45,    // body units the wrist must travel in the swing direction before firing
+    minDisp: opts.minDisp ?? 0.35,    // body units the wrist must travel in the swing direction before firing
+    zoneMul: opts.zoneMul ?? 1.0,     // a swing still inside its wind-up zone needs this much more speed
+    fitMul: opts.fitMul ?? 0.5,        // the smoothed (3-sample fit) speed must reach this share of the threshold
+    onset: opts.onset ?? true,        // fire on the first fast sample when the step before was already accelerating the same way
+    ohMul: opts.ohMul ?? 1.5,         // overheads need this much more speed (lowering a raised arm is slow; a real overhead is fast)
+    maxLead: opts.maxLead ?? 150,      // ms: report a contact still ahead as a negative `ago` (down to -maxLead)
     euro: opts.euro ?? { minCutoff: 1.5, beta: 0.5, dCutoff: 1.0 }
   };
   let serving = false;
@@ -102,11 +107,12 @@ export function createPoseSwingDetector(opts = {}) {
   let elbowPrev = null; // { t, x, y } last real elbow, for elbow speed when the wrist is hidden
   let elbowV = null;
   let top = null;       // { y, t } highest wrist point while wound up for an overhead (the contact moment)
+  let noise = 0.03, noiseN = 0; // landmark noise estimate (body units, per sample) from the arm at rest; far / blurry players are noisier
   const fx = createOneEuro(cfg.euro), fy = createOneEuro(cfg.euro);
   const stats = { filled: 0, real: 0, dropped: 0, fast: [] }; // fast = times of frames with the arm moving at swing speed (tests)
 
   function clearMotion() { hist = []; cand = null; fx.reset(); fy.reset(); }
-  function reset() { clearMotion(); prep = null; zoneSince = null; calmSince = null; forearm = null; elbowPrev = null; elbowV = null; top = null; }
+  function reset() { clearMotion(); noise = 0.03; noiseN = 0; prep = null; zoneSince = null; calmSince = null; forearm = null; elbowPrev = null; elbowV = null; top = null; }
 
   // The racket arm is picked by which side of the body its shoulder is on (in the mirrored view), not by
   // the detector's left/right label: pose models sometimes flip front/back and swap the labels.
@@ -198,6 +204,17 @@ export function createPoseSwingDetector(opts = {}) {
     if (hist.length > 6) hist.shift();
     const v = velocity();
     const speed = v ? Math.hypot(v.vx, v.vy) : 0;
+    // Noise: second difference of the raw wrist while the arm is slow (a smooth movement has almost none).
+    // Updated on every frame outside a swing (gated on speed it would only ever see the quiet frames of a noisy
+    // player); slow and clamped, so the few frames of a real swing barely move it.
+    if (hist.length >= 3 && !cand) {
+      const [h0, h1, h2] = hist.slice(-3);
+      if (h0.real && h1.real && h2.real) {
+        const e = Math.hypot(h2.rx - 2 * h1.rx + h0.rx, h2.ry - 2 * h1.ry + h0.ry) / 3.06;
+        noiseN++;
+        noise += noiseN < 25 ? (e - noise) / noiseN : 0.04 * (Math.min(e, noise * 2.5) - noise); // plain mean to start
+      }
+    }
     if (speed >= cfg.threshold) { stats.fast.push(Math.round(t)); if (stats.fast.length > 400) stats.fast.shift(); }
     const z = zoneOf(p, x, y);
     // READY: after a swing (or setup) the arm must come back to a calm spot in front before a new wind-up counts.
@@ -218,30 +235,44 @@ export function createPoseSwingDetector(opts = {}) {
     const k = prep.kind;
     const dirOf = (vx, vy, sp) => (k === "fh" ? -vx > 0.35 * sp : k === "bh" ? vx > 0.35 * sp : -vy > 0.4 * sp);
     const okDir = dirOf(v.vx, v.vy, speed);
-    const thr = k === "oh" ? cfg.threshold * 1.25 : cfg.threshold; // lowering an arm is slow; a real overhead is fast
+    const thr = k === "oh" ? cfg.threshold * cfg.ohMul : cfg.threshold;
     // The latest step must itself be moving the right way (a single jump, e.g. tracking snapping back after a gap,
     // can't carry the fit or the smoothing filter on its own).
     const a = hist[hist.length - 2], b = hist[hist.length - 1];
     const sdt = a ? (b.t - a.t) / 1000 : 0;
     const svx = sdt > 0 ? (b.rx - a.rx) / sdt : 0, svy = sdt > 0 ? (b.ry - a.ry) / sdt : 0, ssp = Math.hypot(svx, svy);
     const stepOk = sdt > 0 && ssp >= thr * 0.5 && dirOf(svx, svy, ssp); // raw (unfiltered) step
-    if (speed >= thr && okDir && stepOk && (z !== k || speed >= thr * 1.4)) {
+    // Speed now: the 3-sample fit lags the start of a swing, so a clearly fast raw step (both samples real) counts too.
+    // Raw steps are only trusted when the landmark noise is well below the step (not for far, noisy players).
+    const rawOk = a?.real && b.real && sdt > 0 && ssp * sdt >= noise * 1.41 * 4;
+    const fast = speed >= thr * (rawOk ? cfg.fitMul : 1) && (speed >= thr || (rawOk && ssp >= thr));
+    const now = Math.max(speed, rawOk ? ssp : 0);
+    if (fast && okDir && stepOk && (z !== k || now >= thr * cfg.zoneMul)) {
       if (!cand) {
         // A bridged (guessed) wrist may continue a swing but only starts one when the real elbow is clearly swinging too
         // (backhands: the wrist hides behind the chest while the elbow leads the swing out).
         const es = elbowV ? Math.hypot(elbowV.vx, elbowV.vy) : 0;
         if (!p.real && !(elbowV && es >= thr * 0.45 && dirOf(elbowV.vx, elbowV.vy, es))) return null;
         const from = hist.length >= 2 ? hist[hist.length - 2] : hist[0];
-        cand = { kind: k, t0: from.t, x0: from.x, y0: from.y, n: 0, svx: 0, svy: 0, peak: 0, real: 0, disp: 0, top: from.y, p, settled: hist.length >= 3 };
+        const o = hist[Math.max(0, hist.length - 3)]; // raw origin: just before the movement started
+        cand = { kind: k, t0: from.t, x0: from.x, y0: from.y, rx0: o.rx, ry0: o.ry, n: 0, svx: 0, svy: 0, peak: 0, real: 0, disp: 0, top: from.y, p, settled: hist.length >= 3 };
       }
       cand.n++; cand.svx += v.vx; cand.svy += v.vy; cand.p = p; cand.real += p.real ? 1 : 0;
       cand.peak = Math.max(cand.peak, speed, p.real && b.real ? ssp * 0.9 : 0); // raw step: the fit lags at low frame rates
       cand.top = Math.max(cand.top, y);
-      cand.disp = k === "fh" ? cand.x0 - x : k === "bh" ? x - cand.x0 : cand.y0 - y;
+      const fd = k === "fh" ? cand.x0 - x : k === "bh" ? x - cand.x0 : cand.y0 - y;
+      const rd = k === "fh" ? cand.rx0 - b.rx : k === "bh" ? b.rx - cand.rx0 : cand.ry0 - b.ry; // raw: no filter lag
+      cand.disp = cfg.onset && rawOk ? Math.max(fd, rd - noise * 1.41 * 2) : fd;
       cand.x = x; cand.y = y; cand.vx = v.vx; cand.vy = v.vy; cand.t = t;
+      cand.raw = cfg.onset && rawOk ? { x: b.rx, y: b.ry, vx: svx } : null; // contact estimate from the raw wrist (no filter lag)
       // 15 fps or slower: one frame is enough, unless the history only just restarted after a gap.
       const slowFrames = cand.settled && hist.length >= 2 && t - hist[hist.length - 2].t >= 60;
-      if (cand.disp >= cfg.minDisp && (cand.n >= 2 || slowFrames)) return fire(t);
+      // Onset: the step before this one was already moving the same way and the arm is accelerating.
+      const c0 = hist.length >= 3 ? hist[hist.length - 3] : null;
+      const pdt = c0 ? (a.t - c0.t) / 1000 : 0;
+      const pvx = pdt > 0 ? (a.rx - c0.rx) / pdt : 0, pvy = pdt > 0 ? (a.ry - c0.ry) / pdt : 0, psp = Math.hypot(pvx, pvy);
+      const onset = cfg.onset && rawOk && cand.settled && c0.real && pdt > 0 && psp >= thr * 0.3 && dirOf(pvx, pvy, psp) && ssp >= psp * 0.9;
+      if (cand.disp >= Math.max(cfg.minDisp, noise * 1.41 * 3) && (cand.n >= 2 || slowFrames || onset)) return fire(t);
       return null;
     }
     cand = null;
@@ -260,7 +291,9 @@ export function createPoseSwingDetector(opts = {}) {
     top = null;
     let kind = s.kind;
     if (kind === "oh" && serving) kind = "sv";
-    const mvx = s.svx / s.n, mvy = s.svy / s.n;
+    // Direction: the raw path from where the swing started (no filter lag) when it's clean, else the mean fitted velocity.
+    const useRaw = s.raw && Math.hypot(s.raw.x - s.rx0, s.raw.y - s.ry0) > noise * 6;
+    const mvx = useRaw ? s.raw.x - s.rx0 : s.svx / s.n, mvy = useRaw ? s.raw.y - s.ry0 : s.svy / s.n;
     const mag = Math.hypot(mvx, mvy) || 1;
     // Aim (TV left..right). Ground strokes: a flat, across-the-body swing goes cross-court; a more
     // low-to-high swing goes down the line. Overheads go the way the wrist travels sideways.
@@ -270,22 +303,27 @@ export function createPoseSwingDetector(opts = {}) {
     const line = clamp(1 - (2 * (across - 0.5)) / 0.5, -1, 1); // +1 = down the line, -1 = cross-court
     const dir = kind === "fh" ? d * line : kind === "bh" ? -d * line : clamp(((d * mvx) / mag) * 1.5, -1, 1);
     const lift = kind === "oh" || kind === "sv" ? 0 : clamp((mvy / mag) * 1.6, -1, 1); // low-to-high = topspin
-    const peak = s.peak;
-    const power = clamp(0.2 + (0.8 * (peak - cfg.threshold)) / (cfg.threshold * 1.5), 0, 1);
+    // Fired early in the swing, the arm hasn't reached full speed yet: the peak seen so far is ~0.75-0.85 of the
+    // stroke's real peak on synthetic swings (30/15/10 fps), so scale it up.
+    const peak = s.peak * 1.25;
+    const power = clamp(0.2 + (0.8 * (peak - cfg.threshold)) / 12, 0, 1); // fixed span: a lower threshold (sensitivity) shouldn't max out every swing
     // When was (or will be) the contact? Ground strokes: when the wrist crosses the contact line in front of the body.
     // Overheads/serves: at the top, i.e. when the downswing started. ago = ms since then (0 if it's still ahead).
     let tc;
     if (s.kind === "oh") tc = topNow && topNow.t <= s.t0 ? topNow.t : s.t0;
     else {
       const cx = CONTACT_LX[s.kind];
-      const vx = s.vx || mvx;
-      tc = Math.abs(vx) > 0.1 ? (s.t ?? t) + ((cx - (s.x ?? s.x0)) / vx) * 1000 : t;
+      const vx = s.raw ? s.raw.vx : s.vx || mvx;
+      const x0 = s.raw ? s.raw.x : s.x ?? s.x0;
+      tc = Math.abs(vx) > 0.1 ? (s.t ?? t) + ((cx - x0) / vx) * 1000 : t;
       tc = Math.max(tc, s.t0);
     }
-    const ago = Math.round(clamp(t - tc, 0, 250));
+    const ago = Math.round(clamp(t - tc, -cfg.maxLead, 250));
     const c = clamp(0.35 * clamp((peak / cfg.threshold - 1) / 0.8, 0, 1) + 0.35 * clamp(s.disp / (cfg.minDisp * 2), 0, 1) + 0.3 * (s.real / s.n), 0, 1);
     const r2 = (v) => Math.round(v * 100) / 100;
-    return { kind, dir: r2(dir), power: r2(power), lift: r2(lift), speed: r2(peak), t, ago, c: r2(c) };
+    // ang: swing direction in degrees in the body frame (0 = straight across toward the front, + = upward); tests only, not sent.
+    const ang = Math.round((Math.atan2(mvy, kind === "fh" ? -mvx : kind === "bh" ? mvx : Math.abs(mvx)) * 180) / Math.PI);
+    return { kind, dir: r2(dir), power: r2(power), lift: r2(lift), speed: r2(peak), t, ago, c: r2(c), ang };
   }
 
   return {
@@ -301,7 +339,7 @@ export function createPoseSwingDetector(opts = {}) {
     get ready() { return enabled && !needReady; },
     get config() { return { ...cfg, serving }; },
     get prep() { return prep ? prep.kind : null; },
-    get stats() { return { ...stats, fast: stats.fast.slice() }; }
+    get stats() { return { ...stats, noise: Math.round(noise * 1000) / 1000, fast: stats.fast.slice() }; }
   };
 }
 

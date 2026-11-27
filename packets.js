@@ -60,7 +60,7 @@ export function createPacketGate(opts = {}) {
         // Body-camera extras (all optional): ago = ms since the estimated contact (the TV backdates the swing by it),
         // c = detector confidence 0..1, n = per-slot swing counter.
         const ago = num(msg.ago);
-        if (ago !== null) out.ago = Math.round(clamp(ago, 0, 300));
+        if (ago !== null) out.ago = Math.round(clamp(ago, -150, 300)); // < 0: swing caught before the contact
         const c = num(msg.c);
         if (c !== null) out.c = clamp(c, 0, 1);
         const n = num(msg.n);

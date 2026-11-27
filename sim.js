@@ -10,8 +10,8 @@ export const G = 9.8;
 export const BALL_R = 0.1;
 export const SWING_COOLDOWN = 0.4;
 export const EARLY_WINDOW = 0.22; // a swing up to this long before contact still connects
-export const LATE_WINDOW = 0.13;  // a swing up to this long after the ball passed still connects
-export const PERFECT_WINDOW = 0.07;
+export const LATE_WINDOW = 0.16;  // a swing up to this long after the ball passed still connects (+30 ms: phone→TV network time isn't in `ago`)
+export const PERFECT_WINDOW = 0.08; // ±80 ms: covers the body camera's p90 timing error after `ago` (36–57 ms) plus some network jitter
 export const REACH = 1.7;         // lateral reach from the player's centre, metres
 export const PLAYER_X_LIMIT = 5.4;
 export const MAGNUS_K = 0.2;      // simplified Magnus: vertical accel = K * spin * horizontal speed
