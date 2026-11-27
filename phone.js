@@ -5,15 +5,21 @@
 import { PhoneClient, normalizeCode } from "./net.js";
 import { createMotionSwingDetector, createTiltAim } from "./motion.js";
 import { createSwingDetector, mapX } from "./swing.js";
+import { personFrom, createPoseSwingDetector, createPoseTracker, raisedHand, slotX, POSE_THRESH } from "./pose.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const TEST = params.get("test") === "1"; // headless tests: no PeerJS, packets go to window.__phone.sent
 const MP_VER = "0.10.14";
+// Tests only: the headless box runs pose tracking at ~3 fps, so the fake camera clip is played in slow motion
+// and the pose code runs on matching slowed-down time (slowmo=6 -> 1 real second = 1/6 s of movement).
+const SLOWMO = TEST ? Math.min(20, Math.max(1, Number(params.get("slowmo")) || 1)) : 1;
 const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/vision_bundle.mjs`;
 const MP_WASM = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/wasm`;
 const HAND_MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 const CAM_THRESH = { easier: 1.1, normal: 1.5, harder: 2.1 };
+const POSE_MODEL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+const NOCAM = TEST && params.get("nocam") === "1"; // tests: feed synthetic poses through __phone.feedPoses
 
 const client = new PhoneClient();
 const sent = [];
@@ -62,7 +68,8 @@ $("join-form").addEventListener("submit", (e) => {
 });
 client.on("message", (m) => {
   if (m.t === "cfg" && ["easier", "normal", "harder"].includes(m.sens)) setSens(m.sens, false);
-  if (m.t === "buzz") buzz(m.k === "hit" ? 25 : 12);
+  if (m.t === "buzz" && (m.p === undefined || !body.players.length || body.players.includes(m.p))) buzz(m.k === "hit" ? 25 : 12);
+  if (m.t === "slots") onSlots(m);
 });
 client.on("close", () => {
   state.connected = false;
@@ -83,11 +90,12 @@ function setSens(v, tellTv = true) {
   $("sens").value = v;
   motion.setSensitivity(v);
   camSwing.setThreshold(CAM_THRESH[v]);
+  for (const d of body.dets) d.setThreshold(POSE_THRESH[v]);
   if (tellTv) { /* the phone's own choice; the TV just follows the swings */ }
 }
 $("sens").addEventListener("change", (e) => setSens(e.target.value));
 document.querySelectorAll("[data-menu]").forEach((b) => b.addEventListener("click", () => send({ t: "menu", k: b.dataset.menu })));
-$("recal").addEventListener("click", () => (state.mode === "motion" ? beginMotionCal() : beginCameraCal()));
+$("recal").addEventListener("click", () => (state.mode === "motion" ? beginMotionCal() : state.mode === "body" ? beginBodyCal() : beginCameraCal()));
 
 function onSwing(dir, power, extra = "") {
   state.lastSwing = { dir, power, at: performance.now() };
@@ -272,14 +280,183 @@ function handleHand(wrist, palm, now) {
   }
 }
 
+// ---------- mode 3: body camera (MediaPipe PoseLandmarker, 1 or 2 people) ----------
+const body = { n: 1, tracker: null, dets: [], lastSeen: [0, 0], visible: [false, false], cal: null, calSince: 0, raiseSince: [0, 0], calDone: [false, false], swingDone: [false, false], lastPos: [0, 0], players: [], facing: "user", landmarker: null, people: 0, slots: [], lastSwings: [] };
+const SLOT_COL = ["#d9ef4a", "#7fd0ff"];
+
+async function startBody(n) {
+  $("choose-err").textContent = "";
+  try {
+    body.n = n;
+    body.tracker = createPoseTracker({ slots: n });
+    body.dets = Array.from({ length: n }, () => createPoseSwingDetector({ threshold: POSE_THRESH[state.sens] }));
+    body.calDone = [false, false]; body.swingDone = [false, false];
+    state.mode = "body";
+    send({ t: "mode", m: "body", n });
+    $("cam-wrap").hidden = false;
+    $("chip-view").hidden = false;
+    $("body-row").hidden = false;
+    $("hand-1").hidden = n < 2;
+    show("play");
+    keepAwake();
+    if (!NOCAM) {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera needs Safari or Chrome on an https page.");
+      await openCamera();
+      setStep(1, "Loading body tracking…", "First time downloads about 15 MB. After that it's cached.");
+      const vision = await import(MP_URL);
+      const fileset = await vision.FilesetResolver.forVisionTasks(MP_WASM);
+      const make = (delegate) => vision.PoseLandmarker.createFromOptions(fileset, { baseOptions: { modelAssetPath: POSE_MODEL, delegate }, runningMode: "VIDEO", numPoses: n, minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5 });
+      try { body.landmarker = await make("GPU"); state.delegate = "GPU"; } catch { body.landmarker = await make("CPU"); state.delegate = "CPU"; }
+      ctx2d = $("overlay").getContext("2d");
+    }
+    state.camReady = true;
+    chip("chip-sensor", "ok", "Camera");
+    beginBodyCal();
+    if (!NOCAM) requestAnimationFrame(poseLoop);
+  } catch (err) {
+    state.error = err?.message || String(err);
+    $("choose-err").textContent = err?.name === "NotAllowedError" ? "Camera access was declined. Allow the camera in Safari settings, then reload." : state.error;
+    show("choose");
+  }
+}
+async function openCamera() {
+  video = $("video");
+  video.srcObject?.getTracks?.().forEach((t) => t.stop());
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: body.facing, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } } });
+  video.srcObject = stream;
+  await video.play();
+  // The front camera is shown mirrored; the back camera isn't.
+  $("cam-wrap").classList.toggle("is-back", body.facing === "environment");
+}
+function beginBodyCal() {
+  body.cal = "view"; body.calSince = 0; body.calDone = [false, false]; body.swingDone = [false, false];
+  setStep(2, body.n === 2 ? "Both players: step into view" : "Step into view", body.n === 2 ? "Stand side by side about 3 m from the phone, whole body in the picture. Left person = Player " + slotName(0) + "." : "Stand about 3 m from the phone so it sees you from head to feet.");
+}
+function slotName(s) { return body.players[s] !== undefined ? body.players[s] + 1 : s + 1; }
+function onSlots(m) {
+  if (m.error) { $("choose-err").textContent = "This TV already has 2 camera phones."; setStep(state.step, "TV is full", "This TV already has 2 camera phones connected."); return; }
+  body.players = m.p || [];
+  const line = $("slot-line");
+  if (state.mode === "body") {
+    line.hidden = false;
+    line.innerHTML = body.n === 2 ? `Left: <b>Player ${slotName(0)}</b> · Right: <b>Player ${slotName(1)}</b>${m.cam ? ` · camera ${m.cam}` : ""}` : `You are <b>Player ${slotName(0)}</b>${m.cam ? ` · camera ${m.cam}` : ""}`;
+  }
+  paintHands();
+}
+function paintHands() {
+  for (let s = 0; s < 2; s++) $("hand-" + s).textContent = `P${slotName(s)}: ${(body.dets[s]?.config.hand || "right")}-handed`;
+}
+function poseLoop() {
+  if (!body.landmarker || !video || state.mode !== "body") return;
+  const now = performance.now();
+  if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    let res = null;
+    try { res = body.landmarker.detectForVideo(video, now); } catch (e) { state.error = String(e?.message || e); }
+    handlePoses(res?.landmarks || [], now / SLOWMO);
+  }
+  requestAnimationFrame(poseLoop);
+}
+// One frame of poses -> slots -> swings, positions, visibility, setup steps. Also used by the tests.
+function handlePoses(list, now) {
+  const persons = list.map((lm) => { const p = personFrom(lm); if (p) p.raw = lm; return p; }).filter(Boolean);
+  body.people = persons.length;
+  const slots = body.tracker.update(persons, now);
+  body.slots = slots.map((s) => ({ slot: s.slot, id: s.id, seen: !!s.person, cx: s.person ? round(s.person.cx) : null, full: !!s.person?.full }));
+  for (const { slot: s, person: p } of slots) {
+    const sw = body.dets[s].push(p, now);
+    if (p) body.lastSeen[s] = now;
+    const v = now - body.lastSeen[s] < 500;
+    if (v !== body.visible[s]) { body.visible[s] = v; if (body.cal === "done") send({ t: "vis", v, s }); }
+    if (body.cal === "raise" && p && !body.calDone[s]) {
+      const h = raisedHand(p);
+      if (h) { body.raiseSince[s] ||= now; if (now - body.raiseSince[s] > 300) { body.dets[s].setHand(h); body.calDone[s] = true; paintHands(); } }
+      else body.raiseSince[s] = 0;
+    }
+    if (sw) {
+      body.lastSwings.push({ s, ...sw });
+      if (body.lastSwings.length > 50) body.lastSwings.shift();
+      if (body.cal === "swing" && (sw.kind === "fh" || sw.kind === "bh")) body.swingDone[s] = true;
+      if (body.cal === "done") {
+        send({ t: "swing", s, dir: sw.dir, spd: sw.power, k: sw.kind, lift: sw.lift, ts: Date.now() });
+        $("swing-read").textContent = `P${slotName(s)}: ${{ fh: "forehand", bh: "backhand", oh: "overhead", sv: "serve" }[sw.kind]} · power ${Math.round(sw.power * 100)}%`;
+        buzz(15);
+      } else $("swing-read").textContent = `${{ fh: "Forehand", bh: "Backhand", oh: "Overhead", sv: "Serve" }[sw.kind]} detected`;
+    }
+    if (body.cal === "done" && p && now - body.lastPos[s] > 33) {
+      body.lastPos[s] = now;
+      const x = slotX(p.cx, s, body.n);
+      if (s === 0) paintMeter(x);
+      send({ t: "pos", s, x: round(x), y: 0, v: true });
+    }
+  }
+  const all = slots.every((x) => x.person);
+  if (body.cal === "view") {
+    if (all) { body.calSince ||= now; if (now - body.calSince > 600) { body.cal = "raise"; setStep(3, "Raise your racket hand", body.n === 2 ? "Each player: hold your racket hand up above your head." : "Hold your racket hand up above your head for a moment."); } }
+    else body.calSince = 0;
+  } else if (body.cal === "raise" && body.calDone.slice(0, body.n).every(Boolean)) {
+    body.cal = "swing";
+    setStep(4, "Wind up and swing", "Take your racket arm back, then swing a forehand through. " + (body.n === 2 ? "Both players." : ""));
+  } else if (body.cal === "swing" && body.swingDone.slice(0, body.n).every(Boolean)) {
+    finishBodyCal();
+  }
+  // Messages over the camera view.
+  const msg = $("cam-msg");
+  const missing = slots.filter((x) => !x.person).map((x) => x.slot);
+  if (!persons.length) { msg.hidden = false; msg.className = "cam-msg"; msg.textContent = body.n === 2 ? "Step into view (both players)" : "Step into view"; }
+  else if (missing.length) { msg.hidden = false; msg.className = "cam-msg"; msg.textContent = `Player ${slotName(missing[0])}: step into view (${missing[0] === 0 ? "left" : "right"} side)`; }
+  else if (slots.some((x) => !x.person.full)) { msg.hidden = false; msg.className = "cam-msg soft"; msg.textContent = "Step back a little so your feet are in the picture"; }
+  else msg.hidden = true;
+  const anyV = body.visible.slice(0, body.n).some(Boolean);
+  chip("chip-view", anyV ? "ok" : "bad", anyV ? (body.n === 2 ? `${body.visible.filter(Boolean).length}/2 in view` : "In view") : "Not in view");
+  if (ctx2d) drawPoses(slots);
+}
+function finishBodyCal() {
+  body.cal = "done";
+  body.visible = [false, false];
+  setStep(5, "You're ready!", "Wind up and swing to hit: forehand, backhand, or overhead (racket hand above your head). Step left and right to move.");
+}
+const BODY_LINKS = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28]];
+function drawPoses(slots) {
+  const c = $("overlay");
+  if (c.width !== (video?.videoWidth || 640)) { c.width = video?.videoWidth || 640; c.height = video?.videoHeight || 480; }
+  ctx2d.clearRect(0, 0, c.width, c.height);
+  for (const { slot, person } of slots) {
+    if (!person) continue;
+    const lm = person.raw;
+    ctx2d.strokeStyle = SLOT_COL[slot];
+    ctx2d.lineWidth = 5;
+    ctx2d.beginPath();
+    for (const [a, b] of BODY_LINKS) { if ((lm[a].visibility ?? 1) < 0.4 || (lm[b].visibility ?? 1) < 0.4) continue; ctx2d.moveTo(lm[a].x * c.width, lm[a].y * c.height); ctx2d.lineTo(lm[b].x * c.width, lm[b].y * c.height); }
+    ctx2d.stroke();
+    ctx2d.fillStyle = "#ffffff";
+    for (const i of [0, 15, 16, 27, 28]) { if ((lm[i].visibility ?? 1) < 0.4) continue; ctx2d.beginPath(); ctx2d.arc(lm[i].x * c.width, lm[i].y * c.height, i === 15 || i === 16 ? 9 : 6, 0, Math.PI * 2); ctx2d.fill(); }
+    // Label (the canvas is mirrored by CSS, so flip the text back).
+    const x = lm[0].x * c.width, y = Math.max(24, lm[0].y * c.height - 40);
+    ctx2d.save();
+    ctx2d.translate(x, y);
+    if (!$("cam-wrap").classList.contains("is-back")) ctx2d.scale(-1, 1);
+    ctx2d.font = "700 26px system-ui, sans-serif";
+    ctx2d.textAlign = "center";
+    ctx2d.fillStyle = SLOT_COL[slot];
+    ctx2d.fillText("P" + slotName(slot), 0, 0);
+    ctx2d.restore();
+  }
+}
+$("skip-cal").addEventListener("click", () => { if (state.mode === "body") finishBodyCal(); });
+$("flip-cam").addEventListener("click", async () => { if (state.mode !== "body" || NOCAM) return; body.facing = body.facing === "user" ? "environment" : "user"; try { await openCamera(); } catch (e) { state.error = String(e?.message || e); } });
+for (const s of [0, 1]) $("hand-" + s).addEventListener("click", () => { const d = body.dets[s]; if (!d) return; d.setHand(d.config.hand === "right" ? "left" : "right"); paintHands(); });
+
 // ---------- misc ----------
 let wakeLock = null;
 async function keepAwake() { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch { /* optional */ } }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state.mode) keepAwake(); });
 $("pick-motion").addEventListener("click", startMotion);
 $("pick-camera").addEventListener("click", startCamera);
+$("pick-body1").addEventListener("click", () => startBody(1));
+$("pick-body2").addEventListener("click", () => startBody(2));
 
-window.__phone = { state, sent, trace, motion, tilt, camSwing, get range() { return range; }, join };
+window.__phone = { state, sent, trace, motion, tilt, camSwing, get range() { return range; }, join, body, startBody, feedPoses: (list, t) => handlePoses(list, t ?? performance.now()), onMessage: (m) => client.emit("message", m) };
 
 const initial = codeFromLocation();
 if (initial) { $("code").value = initial; join(initial); }

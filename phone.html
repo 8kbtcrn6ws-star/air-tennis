@@ -37,13 +37,21 @@
   <!-- 2. choose how to play -->
   <section id="v-choose" class="view" hidden>
     <h2>How do you want to play?</h2>
+    <button class="choice" id="pick-body1">
+      <span class="choice-ico" aria-hidden="true">🧍</span>
+      <span><strong>Body camera · 1 player</strong><small>Stand the phone up about 3 m away, facing you. Your arm is the racket. Video never leaves the phone.</small></span>
+    </button>
+    <button class="choice" id="pick-body2">
+      <span class="choice-ico" aria-hidden="true">🧍🧍</span>
+      <span><strong>Body camera · 2 players</strong><small>Two people side by side in front of one phone: left = one end of the court, right = the other.</small></span>
+    </button>
     <button class="choice" id="pick-motion">
       <span class="choice-ico" aria-hidden="true">🎾</span>
       <span><strong>Swing your phone</strong><small>Hold the phone like a racket handle and swing it. Best feel. Uses the motion sensors.</small></span>
     </button>
     <button class="choice" id="pick-camera">
       <span class="choice-ico" aria-hidden="true">📷</span>
-      <span><strong>Phone on table</strong><small>Stand the phone up facing you and swing your hand. Uses the front camera; video never leaves the phone.</small></span>
+      <span><strong>Hand only (close up)</strong><small>The v1 mode: phone on the table, swing your hand at it. Front camera; video never leaves the phone.</small></span>
     </button>
     <p id="choose-err" class="err" role="alert"></p>
   </section>
@@ -53,6 +61,7 @@
     <div class="cam" id="cam-wrap" hidden>
       <video id="video" playsinline muted autoplay></video>
       <canvas id="overlay"></canvas>
+      <div class="cam-msg" id="cam-msg" hidden>Step into view</div>
       <p class="cam-note">Camera stays on this phone. Nothing is uploaded or saved.</p>
     </div>
     <div class="cal">
@@ -61,11 +70,16 @@
       <p class="lead" id="step-help"></p>
       <div class="meter" aria-hidden="true"><div class="meter-track"><div id="meter-dot" class="meter-dot"></div></div></div>
       <p class="swing-read" id="swing-read"></p>
+      <p class="slot-line" id="slot-line" hidden></p>
     </div>
     <div class="remote" id="remote">
       <div class="grid4">
-        <button class="mini" data-menu="match">Rally vs CPU</button>
+        <button class="mini" data-menu="match">1P vs CPU</button>
+        <button class="mini" data-menu="match2">2P Match</button>
+        <button class="mini" data-menu="rally2">2P Rally</button>
+        <button class="mini" data-menu="doubles">Doubles</button>
         <button class="mini" data-menu="practice">Ball Machine</button>
+        <button class="mini" data-menu="training">Training</button>
         <button class="mini" data-menu="target">Target</button>
         <button class="mini" data-menu="rally">Rally Challenge</button>
       </div>
@@ -73,6 +87,12 @@
         <button class="mini ghost" data-menu="pause">Pause</button>
         <button class="mini ghost" data-menu="menu">TV menu</button>
         <button class="mini ghost" id="recal">Redo setup</button>
+      </div>
+      <div class="row" id="body-row" hidden>
+        <button class="mini ghost" id="skip-cal">Skip setup</button>
+        <button class="mini ghost" id="flip-cam">Flip camera</button>
+        <button class="mini ghost" id="hand-0">P1: right-handed</button>
+        <button class="mini ghost" id="hand-1" hidden>P2: right-handed</button>
       </div>
       <label class="sens">Swing sensitivity
         <select id="sens">

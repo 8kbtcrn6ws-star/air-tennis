@@ -29,12 +29,28 @@ export function awardPoint(score, who) {
 }
 
 // Labels for the scoreboard. Returns { P, A, call } where call is "Deuce", "Advantage You" etc.
-export function pointLabels(score) {
+// names lets 2-player modes say "Advantage Player 2" instead of "Advantage CPU".
+export function pointLabels(score, names = { P: "You", A: "CPU" }) {
   const p = score.points.P;
   const a = score.points.A;
   if (p >= 3 && a >= 3) {
     if (p === a) return { P: "40", A: "40", call: "Deuce" };
-    return p > a ? { P: "AD", A: "40", call: "Advantage You" } : { P: "40", A: "AD", call: "Advantage CPU" };
+    return p > a ? { P: "AD", A: "40", call: "Advantage " + names.P } : { P: "40", A: "AD", call: "Advantage " + names.A };
   }
   return { P: POINT_NAMES[Math.min(p, 3)], A: POINT_NAMES[Math.min(a, 3)], call: "" };
+}
+
+// One-line match status for the broadcast strip: "Match point Player 1", "Break point", "Game point CPU", "Deuce"…
+export function matchStatus(score, names = { P: "You", A: "CPU" }) {
+  if (score.winner) return `Game, set and match ${names[score.winner]}`;
+  const L = pointLabels(score, names);
+  const p = score.points.P, a = score.points.A;
+  let lead = null;
+  if (p >= 3 && p > a) lead = "P";
+  if (a >= 3 && a > p) lead = "A";
+  if (!lead) return L.call || "";
+  const matchPt = score.games[lead] + 1 >= score.gamesToWin;
+  if (matchPt) return `Match point ${names[lead]}`;
+  if (lead !== score.server) return `Break point ${names[lead]}`;
+  return L.call ? L.call : `Game point ${names[lead]}`;
 }

@@ -164,10 +164,16 @@ export class TvHost {
     });
     const gone = () => {
       this.conns.delete(id);
-      this.emit("leave", { count: this.conns.size });
+      this.emit("leave", { count: this.conns.size, from: id });
     };
     conn.on("close", gone);
     conn.on("error", gone);
+  }
+
+  sendTo(id, msg) {
+    const conn = this.conns.get(id);
+    if (!conn) return;
+    try { conn.send(msg); } catch { /* ignore */ }
   }
 
   broadcast(msg) {

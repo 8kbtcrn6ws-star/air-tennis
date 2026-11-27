@@ -1,7 +1,7 @@
 // Air Tennis TV app: menus, input, phone link, game loop. The TV is the only judge of hits and score.
 import { createSim, MODES, FLIGHT } from "./sim.js";
-import { pointLabels } from "./scoring.js";
-import { createPacketGate } from "./packets.js";
+import { pointLabels, matchStatus } from "./scoring.js";
+import { createPacketGate, createSlotMap } from "./packets.js";
 import { TvHost } from "./net.js";
 import { sfx, unlockAudio, audio, setMusic } from "./audio.js";
 
@@ -18,7 +18,7 @@ const q = params.get("quality") || params.get("q");
 if (q === "low" || q === "basic") settings.gfx = "basic";
 if (q === "high") settings.gfx = "high";
 const saveSettings = () => { try { localStorage.setItem(SKEY, JSON.stringify(settings)); } catch { /* private mode */ } };
-const stats = loadJSON(STKEY, { bestRally: 0, matchWins: 0, matchesPlayed: 0, missedShots: 0, targetBest: 0, goodShots: 0 });
+const stats = loadJSON(STKEY, { bestRally: 0, matchWins: 0, matchesPlayed: 0, missedShots: 0, targetBest: 0, goodShots: 0, best2pRally: 0, bestTiming: 0 });
 const saveStats = () => { try { localStorage.setItem(STKEY, JSON.stringify(stats)); } catch { /* private mode */ } };
 audio.muted = !settings.sound;
 
@@ -135,11 +135,37 @@ function startMode(mode) {
   clearTimeout(resultsTimer);
   countdownTimers.forEach(clearTimeout);
   $("banner").className = "banner";
-  sim.start(mode, { gamesToWin: settings.games, flight: settings.flight });
+  sim.start(mode, { gamesToWin: settings.games, flight: settings.flight, humans: humansFor(mode) });
+  $("timing").hidden = mode !== "training";
+  $("timing-counts").textContent = "";
+  $("timing-mark").className = "";
   hudCache = "";
   setScreen("game");
   setHint();
+  host?.broadcast({ t: "state", screen: "game", mode, humans: humansFor(mode) });
   if (settings.music && settings.sound) setMusic(true);
+}
+// Who is a person in this mode: the mode's defaults plus, in Doubles, every player a phone has claimed.
+function humansFor(mode) {
+  const ids = MODES[mode].humans.slice();
+  if (mode === "doubles") for (const c of slotMap.all()) for (const id of c.players) if (!ids.includes(id)) ids.push(id);
+  return ids;
+}
+const TWO = (m = sim.mode) => !!MODES[m]?.two;
+function playerName(id) {
+  const p = sim.players[id];
+  if (!p) return "";
+  if (!p.human) return "CPU";
+  return "Player " + (id + 1);
+}
+// Names per side for calls ("Advantage …") and results.
+function sideNames() {
+  if (sim.mode === "doubles") {
+    const team = (a, b) => [a, b].map((i) => (sim.players[i].human ? "P" + (i + 1) : "CPU")).join(" / ");
+    return { P: team(0, 2), A: team(1, 3) };
+  }
+  if (TWO()) return { P: "Player 1", A: "Player 2" };
+  return { P: "You", A: "CPU" };
 }
 function toMenu() {
   clearTimeout(resultsTimer);
@@ -147,10 +173,11 @@ function toMenu() {
   paintStats();
   setScreen("menu");
 }
-function pause(reason) {
+function pause(reason, who = null) {
   if (screen !== "game") return;
   pauseReason = reason;
-  const titles = { user: ["Paused", ""], view: ["Can't see you", "Step back in front of your phone so the camera can see you and your hand. The game carries on by itself when you're back."], link: ["Phone disconnected", "The phone stopped sending. Check it's awake and on the Air Tennis page, or carry on with the keyboard."] };
+  const seeWho = who === null || !TWO() ? "you" : playerName(who);
+  const titles = { user: ["Paused", ""], view: [`Can't see ${seeWho}`, "Step into view of the phone camera so it can see your whole body (or your hand in hand mode). The game carries on by itself when you're back."], link: ["Phone disconnected", "The phone stopped sending. Check it's awake and on the Air Tennis page, or carry on with the keyboard."] };
   const [t, m] = titles[reason] || titles.user;
   $("pause-title").textContent = t;
   $("pause-msg").textContent = m;
@@ -194,37 +221,65 @@ function showResults(eyebrow, title, rows) {
 // ---------- HUD ----------
 let hudCache = "";
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+function staminaBar(id) {
+  const p = sim.players[id];
+  const w = Math.round((p?.stamina ?? 1) * 100);
+  return `<span class="stam${w < 35 ? " low" : ""}" title="Stamina"><i style="width:${w}%"></i></span>`;
+}
+function scoreRow(side, L, sv, games, names) {
+  const ids = sim.players.filter((p) => p.active && p.side === side).map((p) => p.id);
+  const serving = sim.players[sim.serverId]?.side === side && sv;
+  return `<div class="sb-row ${side === "P" ? "near" : "far"}"><span class="srv ${serving ? "on" : ""}"></span>`
+    + `<span class="nm">${names[side] === "You" ? "Player 1" : names[side]}</span><span class="stams">${ids.map(staminaBar).join("")}</span>`
+    + `<span class="gm">${games}</span><span class="pt">${L}</span></div>`;
+}
+const kv = (k, v) => `<div class="kv"><span>${k}</span><b>${v}</b></div>`;
 function paintHud() {
   const s = sim;
   let time;
   let html;
-  let label = "Score";
-  if (s.mode === "match") {
+  let status = "";
+  const names = sideNames();
+  if (MODES[s.mode].scored) {
     time = fmtTime(s.matchTime);
-    const L = pointLabels(s.score);
-    const sv = s.score.server;
-    html = `<div class="sb-line you"><span class="serve-dot ${sv === "P" ? "on" : ""}"></span><span class="who">You</span><span class="g">${s.score.games.P}</span><span class="pts">${L.P}</span></div>`
-      + `<div class="sb-line"><span class="serve-dot ${sv === "A" ? "on" : ""}"></span><span class="who">CPU</span><span class="g">${s.score.games.A}</span><span class="pts">${L.A}</span></div>`
-      + (L.call ? `<div class="sb-call">${L.call}</div>` : `<div class="sb-call">Games to win: ${s.score.gamesToWin}</div>`);
+    const L = pointLabels(s.score, names);
+    const sv = s.phase === "serve" || s.phase === "rally" || s.phase === "pointOver" || s.phase === "countdown";
+    html = scoreRow("P", L.P, sv, s.score.games.P, names) + scoreRow("A", L.A, sv, s.score.games.A, names);
+    status = matchStatus(s.score, names) || (s.phase === "serve" ? `${playerName(s.serverId)} to serve` : `First to ${s.score.gamesToWin} games`);
+  } else if (s.mode === "rally2") {
+    time = fmtTime(s.time - (s.startedAt || 0));
+    html = scoreRow("P", "", s.phase === "serve", "", names) + scoreRow("A", "", s.phase === "serve", "", names);
+    status = s.phase === "serve" ? `${playerName(s.serverId)} to serve` : `Best rally ${Math.max(stats.best2pRally, s.longestRally)}`;
   } else if (s.mode === "target") {
     time = fmtTime(Math.ceil(s.timeLeft));
-    html = `<div class="sb-big">${s.targetScore}</div><div class="sb-sub">Best ${stats.targetBest}</div>`;
+    html = kv("Score", s.targetScore) + kv("Best", stats.targetBest);
+    status = "Land it in the rings";
   } else if (s.mode === "rally") {
     time = fmtTime(s.time - (s.startedAt || 0));
-    label = "Rally";
-    html = `<div class="sb-big">${s.rally}</div><div class="sb-sub">Best ${stats.bestRally}</div>`;
+    html = kv("Rally", s.rally) + kv("Best", stats.bestRally);
+    status = "One miss and it's over";
+  } else if (s.mode === "training") {
+    time = fmtTime(s.time - (s.startedAt || 0));
+    const tr = s.training;
+    html = kv("Ball", `${Math.min(s.session.feeds, 20)} / 20`) + kv("Perfect", tr.perfect) + kv("Hits", s.session.hits);
+    status = tr.last ? `Last swing ${tr.last.verdict} (${tr.last.tc > 0 ? "+" : ""}${Math.round(tr.last.tc * 1000)} ms)` : "Swing as the ball reaches you";
   } else {
     time = fmtTime(s.time - (s.startedAt || 0));
-    label = "Good shots";
-    html = `<div class="sb-big">${s.session.good}</div><div class="sb-sub">Hits ${s.session.hits} · Misses ${s.session.misses}</div>`;
+    html = kv("Good shots", s.session.good) + kv("Hits", s.session.hits) + kv("Misses", s.session.misses);
+    status = "Ball machine";
   }
   $("timer").textContent = time;
-  const key = label + html;
+  const key = html + status + s.mode;
   if (key !== hudCache) {
     hudCache = key;
-    $("score-label").textContent = label;
+    $("bug-mode").textContent = MODES[s.mode].label;
     $("board").innerHTML = html;
+    $("bug-status").textContent = status;
+    $("bug-status").hidden = !status;
   }
+  const rally = MODES[s.mode].machine ? s.session.good : s.shots;
+  $("hud-rally").textContent = rally;
+  $("hud-speed").textContent = s.lastSpeed ? s.lastSpeed : "–";
 }
 let bannerTimer = 0;
 function banner(text, kind = "", ms = 1100) {
@@ -255,42 +310,67 @@ function popup(text, x, y, z) {
 }
 function setHint() {
   const phone = inputMode === "phone";
-  const how = phone ? (phoneKind === "motion" ? "Swing your phone like a racket" : "Swing your hand at the phone") : "← → move · Space swing · hold Shift for power · or use the mouse";
+  const kindText = { motion: "Swing your phone like a racket", camera: "Swing your hand at the phone", body: "Wind up and swing: your arm is the racket" };
+  let how = phone ? kindText[phoneKind] || kindText.motion : "← → move · Space swing · hold Shift for power · or use the mouse";
+  if (TWO() && !phone) how = "P1: ← → + Space · P2: A D + W";
   $("hint").textContent = `${how} · Esc pause`;
   const chip = $("input-chip");
   chip.dataset.state = phone ? "ok" : "kb";
-  chip.textContent = phone ? (phoneKind === "motion" ? "Phone racket" : "Phone camera") : "Keyboard / mouse";
+  chip.textContent = phone ? ({ motion: "Phone racket", camera: "Phone camera", body: "Body camera" }[phoneKind] || "Phone") : "Keyboard / mouse";
 }
 
 // ---------- sim events -> effects, sound, stats ----------
+let maxSpeed = 0;
+function showTiming(e) {
+  const m = $("timing-mark");
+  const x = Math.max(-1, Math.min(1, -e.tc / 0.3)); // early on the left, late on the right
+  m.style.left = (50 + x * 45) + "%";
+  m.className = "show " + e.verdict;
+  const tr = sim.training;
+  $("timing-counts").textContent = `Perfect ${tr.perfect} · Early ${tr.early} · Late ${tr.late}`;
+  callout(e.verdict === "perfect" ? "Perfect timing" : e.verdict === "early" ? `Early ${Math.round(e.tc * 1000)} ms` : `Late ${Math.round(-e.tc * 1000)} ms`, e.verdict === "perfect" ? "perfect" : "miss");
+}
 function handleEvents() {
   for (const e of sim.drain()) {
     const quiet = fastForwarding;
+    if ((e.type === "hit" || e.type === "serve") && e.kmh) maxSpeed = Math.max(maxSpeed, e.kmh);
+    if (e.type === "phase" && e.phase === "countdown") maxSpeed = 0;
     switch (e.type) {
       case "phase":
         if (e.phase === "countdown" && !quiet) countdownFx();
-        if (e.phase === "serve" && sim.score.server === "P" && !quiet) callout("Swing to serve");
+        if (e.phase === "serve" && sim.players[sim.serverId]?.human && !quiet) callout(TWO() ? `${playerName(sim.serverId)}: swing to serve` : "Swing to serve");
         if (e.phase === "countdown") sim.startedAt = sim.time + 3;
         break;
       case "hit":
         if (!quiet) {
-          scene?.burst(e.x, e.y, e.z, e.who === "P" ? scene.colors.LIME : scene.colors.PINK, e.quality === "perfect");
-          if (e.who === "P") {
+          scene?.burst(e.x, e.y, e.z, e.quality === "ai" ? scene.colors.PINK : scene.colors.LIME, e.quality === "perfect");
+          if (e.quality !== "ai") {
             sfx.hit(e.power, e.quality === "perfect");
-            callout(e.quality === "perfect" ? "Perfect!" : "Nice!", e.quality === "perfect" ? "perfect" : "");
-            host?.broadcast({ t: "buzz", k: "hit" });
+            const word = e.quality === "perfect" ? "Perfect!" : "Nice!";
+            callout(TWO() ? `${playerName(e.id)} · ${word}` : word, e.quality === "perfect" ? "perfect" : "");
+            host?.broadcast({ t: "buzz", k: "hit", p: e.id });
           } else sfx.aiHit();
         }
         break;
       case "swing": if (!quiet) sfx.swing(); break;
       case "bounce": if (!quiet) { sfx.bounce(); scene?.bounceMark(e.x, e.z); } break;
       case "net": if (!quiet) sfx.net(); break;
-      case "feedback": if (!quiet) { callout(e.text, "miss"); sfx.miss(); } break;
+      case "feedback": if (!quiet) { callout(TWO() ? `${playerName(e.id)} · ${e.text}` : e.text, "miss"); sfx.miss(); } break;
+      case "timing": if (!quiet) showTiming(e); break;
+      case "trainingOver": {
+        const acc = e.swings ? Math.round((e.perfect / e.swings) * 100) : 0;
+        if (acc > stats.bestTiming) stats.bestTiming = acc;
+        saveStats();
+        if (!quiet) { sfx.win(); banner("Session done", "lime small", 1200); }
+        laterResults(quiet ? 0 : 1300, "Training", `${e.perfect} perfect of ${e.swings}`, [["Perfect", e.perfect], ["Early", e.early], ["Late", e.late], ["Average error", `${Math.round(e.avg * 1000)} ms`], ["Balls hit", e.hits], ["Best perfect %", stats.bestTiming + "%"]]);
+        break;
+      }
       case "target":
         if (!quiet) { popup(`+${e.points}`, e.x, 0.3, e.z); if (e.ring) scene?.burst(e.x, 0.1, e.z, scene.colors.LIME, true); }
         break;
       case "point":
-        if (e.playerMissed) { stats.missedShots++; saveStats(); }
+        if (sim.mode === "rally2" && e.shots > stats.best2pRally) { stats.best2pRally = e.shots; saveStats(); }
+        if (e.playerMissed && !TWO()) { stats.missedShots++; saveStats(); }
         if (!quiet) pointFx(e);
         break;
       case "rallyOver":
@@ -306,6 +386,13 @@ function handleEvents() {
         laterResults(quiet ? 0 : 1300, "Target Practice", `${e.score} points`, [["Score", e.score], ["Best", stats.targetBest], ["Shots in", e.good], ["Swings that hit", e.hits]]);
         break;
       case "matchOver": {
+        if (sim.mode !== "match") {
+          const n = sideNames();
+          const title = sim.mode === "doubles" ? `${n[e.winner]} win` : `${n[e.winner]} wins`;
+          if (!quiet) { sfx.win(); sfx.cheer(true); banner(title, "lime", 1600); }
+          laterResults(quiet ? 0 : 1800, "Match over", title, [["Games", `${e.games.P} – ${e.games.A}`], ["Match time", fmtTime(e.time)], ["Longest rally", sim.longestRally], ["Fastest ball", `${maxSpeed} km/h`]]);
+          break;
+        }
         stats.matchesPlayed++;
         if (e.winner === "P") stats.matchWins++;
         if (sim.longestRally > stats.bestRally) stats.bestRally = sim.longestRally;
@@ -326,6 +413,21 @@ function countdownFx() {
   countdownTimers.push(setTimeout(() => { if (screen === "game") { banner("Play!", "lime", 700); sfx.beep(true); } }, 3000));
 }
 function pointFx(e) {
+  if (sim.mode === "rally2") {
+    banner(`Rally ${e.shots}`, "small", 1100);
+    sfx.cheer(e.shots >= 6);
+    scene?.cheer?.(e.shots >= 6);
+    return;
+  }
+  if (sim.mode === "match2" || sim.mode === "doubles") {
+    const n = sideNames();
+    if (e.game && !e.match) banner(`Game ${n[e.game]}`, "lime small", 1500);
+    else if (!e.match) banner(e.reason === "Winner" ? "Winner!" : e.reason, "small", 1000);
+    sfx.cheer(e.game);
+    scene?.cheer?.(!!e.game);
+    return;
+  }
+  if (sim.mode === "match") scene?.cheer?.(e.winner === "P");
   if (sim.mode === "match") {
     if (e.game && !e.match) { banner(e.game === "P" ? "Game You" : "Game CPU", "lime small", 1500); }
     else if (!e.match) banner(e.reason === "Winner" ? "Winner!" : e.reason, e.winner === "P" ? "lime small" : "small", 1000);
@@ -348,8 +450,14 @@ window.addEventListener("keydown", (e) => {
   if (screen === "game") {
     keys.add(k.toLowerCase());
     if (k === "Escape" || k === "p" || k === "P") pause("user");
+    if (TWO() && (k === "w" || k === "W") && !e.repeat) {
+      const dir = (keys.has("d") ? 1 : 0) - (keys.has("a") ? 1 : 0);
+      sim.swing(dir * 0.8, e.shiftKey ? 1 : 0.55, "kb", 1);
+      return;
+    }
     if ((k === " " || k === "j" || k === "J") && !e.repeat) {
-      const dir = (keys.has("arrowright") || keys.has("d") ? 1 : 0) - (keys.has("arrowleft") || keys.has("a") ? 1 : 0);
+      const two = TWO();
+      const dir = (keys.has("arrowright") || (!two && keys.has("d")) ? 1 : 0) - (keys.has("arrowleft") || (!two && keys.has("a")) ? 1 : 0);
       sim.swing(dir * 0.8, e.shiftKey ? 1 : 0.55, "kb");
       inputMode = inputMode === "phone" ? "phone" : "kb";
     }
@@ -377,9 +485,15 @@ window.addEventListener("pointerdown", (e) => {
   if (h.length > 1) v = (h[h.length - 1].x - h[0].x) / Math.max(0.03, (h[h.length - 1].t - h[0].t) / 1000);
   sim.swing(Math.max(-1, Math.min(1, v / 3)), Math.min(1, 0.45 + Math.abs(v) / 8), "mouse");
 });
+let kbX2 = 0;
 function updateKeyboardInput(dt) {
+  const two = TWO();
+  if (two && performance.now() - (lastSlotPos[1] || -1e9) > 400) {
+    const d2 = (keys.has("d") ? 1 : 0) - (keys.has("a") ? 1 : 0);
+    if (d2) { kbX2 = Math.max(-1, Math.min(1, kbX2 + d2 * dt * 1.6)); sim.setInputX(kbX2, 1); }
+  }
   if (inputMode === "phone" && performance.now() - lastPhonePos < 400) return;
-  const dir = (keys.has("arrowright") || keys.has("d") ? 1 : 0) - (keys.has("arrowleft") || keys.has("a") ? 1 : 0);
+  const dir = (keys.has("arrowright") || (!two && keys.has("d")) ? 1 : 0) - (keys.has("arrowleft") || (!two && keys.has("a")) ? 1 : 0);
   if (dir) { kbX = Math.max(-1, Math.min(1, kbX + dir * dt * 1.6)); sim.setInputX(kbX); }
   else if (performance.now() - mouse.lastMove < 1500) { kbX = mouse.x; sim.setInputX(mouse.x * 1.1); }
 }
@@ -395,33 +509,72 @@ let invisibleSince = null;
 let calStep = 0;
 const gate = createPacketGate();
 
-function onPhoneMessage(raw) {
-  const m = gate.accept(raw);
+const gates = new Map();   // one packet gate per phone connection
+const slotMap = createSlotMap();
+const lastSlotPos = {};    // player id -> last pos time
+const seen = {};           // player id -> { visible, since }
+const connKind = new Map(); // from -> "motion" | "camera" | "body"
+function gateFor(from) {
+  let g = gates.get(from);
+  if (!g) { g = from === "local" ? gate : createPacketGate(); gates.set(from, g); }
+  return g;
+}
+// Which player does this packet drive? Phones claim player slots when they say which mode they use.
+function playerFor(from, s = 0) {
+  if (!slotMap.get(from)) slotMap.assign(from, connKind.get(from) || "motion", 1);
+  return slotMap.player(from, s);
+}
+function sendTo(from, msg) {
+  if (from === "local") { window.__airTennis.outbox.push(msg); return; }
+  host?.sendTo?.(from, msg);
+}
+function onPhoneMessage(raw, from = "local") {
+  const m = gateFor(from).accept(raw);
   if (!m) return null;
   lastPhoneMsg = performance.now();
   switch (m.t) {
     case "hello":
-      host?.broadcast({ t: "cfg", sens: settings.sens });
+      sendTo(from, { t: "cfg", sens: settings.sens });
       break;
-    case "mode":
+    case "mode": {
       phoneKind = m.m;
+      connKind.set(from, m.m);
+      const a = slotMap.assign(from, m.m, m.m === "body" ? m.n : 1);
+      sendTo(from, a.error ? { t: "slots", error: "full" } : { t: "slots", p: a.players, cam: a.cam });
       document.body.classList.toggle("is-motion", phoneKind === "motion");
+      document.body.classList.toggle("is-body", phoneKind === "body");
       setHint();
       break;
-    case "pos":
-      lastPhonePos = performance.now();
-      if (inputMode !== "phone" && calStep >= 5) { inputMode = "phone"; setHint(); }
-      sim.setInputX(m.x);
-      $("cal-dot").style.left = ((m.x + 1) * 50) + "%";
-      setVisible(m.v);
+    }
+    case "pos": {
+      const id = playerFor(from, m.s);
+      if (id === null) break;
+      lastSlotPos[id] = performance.now();
+      if (id === 0) {
+        lastPhonePos = performance.now();
+        if (inputMode !== "phone" && calStep >= 5) { inputMode = "phone"; setHint(); }
+        $("cal-dot").style.left = ((m.x + 1) * 50) + "%";
+      }
+      sim.setInputX(m.x, id);
+      setVisible(from, id, m.v);
       break;
-    case "vis":
-      setVisible(m.v);
+    }
+    case "vis": {
+      const id = playerFor(from, m.s);
+      if (id !== null) setVisible(from, id, m.v);
       break;
-    case "swing":
-      if (screen === "game") { inputMode = "phone"; sim.swing(m.dir, m.spd, "phone"); }
-      if (screen === "cal") { $("cal-msg").textContent = "Swing detected!"; sfx.hit(0.6, true); }
+    }
+    case "swing": {
+      const id = playerFor(from, m.s);
+      if (id === null) break;
+      if (screen === "game") {
+        if (id === 0) inputMode = "phone";
+        const r = sim.swing(m.dir, m.spd, "phone", id, { kind: m.k, lift: m.lift });
+        window.__airTennis.lastSwing = { id, ...r };
+      }
+      if (screen === "cal") { $("cal-msg").textContent = m.k ? `${{ fh: "Forehand", bh: "Backhand", oh: "Overhead", sv: "Serve" }[m.k]} detected!` : "Swing detected!"; sfx.hit(0.6, true); }
       break;
+    }
     case "cal":
       setCal(m.step);
       break;
@@ -432,11 +585,25 @@ function onPhoneMessage(raw) {
   }
   return m;
 }
-function setVisible(v) {
-  if (phoneKind !== "camera") { phoneVisible = true; invisibleSince = null; return; }
-  phoneVisible = v;
-  if (!v && invisibleSince === null) invisibleSince = performance.now();
-  if (v) invisibleSince = null;
+function setVisible(from, id, v) {
+  const k = connKind.get(from);
+  const cam = k === "camera" || k === "body";
+  const st = seen[id] || (seen[id] = { visible: true, since: null });
+  if (!cam) { st.visible = true; st.since = null; }
+  else {
+    st.visible = v;
+    if (!v && st.since === null) st.since = performance.now();
+    if (v) st.since = null;
+  }
+  phoneVisible = Object.values(seen).every((x) => x.visible);
+  invisibleSince = Object.values(seen).reduce((a, x) => (x.since !== null && (a === null || x.since < a) ? x.since : a), null);
+}
+// A camera player who's in this game and has been out of view for > 0.7 s pauses the game.
+function hiddenPlayer(now) {
+  for (const [id, st] of Object.entries(seen)) {
+    if (st.since !== null && now - st.since > 700 && sim.players[id]?.active && sim.players[id]?.human) return Number(id);
+  }
+  return null;
 }
 function setCal(step) {
   calStep = Math.max(calStep, step);
@@ -446,7 +613,8 @@ function setCal(step) {
     li.classList.toggle("is-done", n <= step);
     li.classList.toggle("is-now", n === step + 1);
   });
-  const msgs = ["Waiting for your phone…", "Connected. Starting sensors on the phone…", phoneKind === "motion" ? "Hold the phone like a racket handle." : "Raise your racket hand so the camera sees it.", phoneKind === "motion" ? "Tilt the phone left, then right." : "Move your hand left, then right.", "Now swing a forehand.", "All set! Pick a mode to play."];
+  const body = phoneKind === "body";
+  const msgs = ["Waiting for your phone…", "Connected. Starting sensors on the phone…", phoneKind === "motion" ? "Hold the phone like a racket handle." : body ? "Step back until the camera sees your whole body." : "Raise your racket hand so the camera sees it.", phoneKind === "motion" ? "Tilt the phone left, then right." : body ? "Raise your racket hand above your head." : "Move your hand left, then right.", body ? "Wind up and swing a forehand." : "Now swing a forehand.", "All set! Pick a mode to play."];
   $("cal-msg").textContent = msgs[Math.min(step, 5)];
   if (step >= 5) {
     inputMode = "phone";
@@ -456,7 +624,7 @@ function setCal(step) {
   }
 }
 function phoneMenu(k) {
-  if (["practice", "match", "rally", "target"].includes(k)) return startMode(k);
+  if (MODES[k]) return startMode(k);
   if (k === "pause") return screen === "game" ? pause("user") : resume();
   if (k === "restart") return startMode(lastMode);
   if (k === "menu") return toMenu();
@@ -471,7 +639,7 @@ async function startLink() {
   const st = $("link-status");
   try {
     host = new TvHost();
-    host.on("msg", ({ msg }) => onPhoneMessage(msg));
+    host.on("msg", ({ msg, from }) => onPhoneMessage(msg, from));
     host.on("join", ({ count }) => {
       st.dataset.state = "ok";
       st.textContent = count === 1 ? "Phone connected" : `${count} phones connected`;
@@ -480,7 +648,8 @@ async function startLink() {
       host.broadcast({ t: "cfg", sens: settings.sens });
       host.broadcast({ t: "state", screen, mode: sim.mode });
     });
-    host.on("leave", ({ count }) => {
+    host.on("leave", ({ count, from }) => {
+      if (from) { slotMap.release(from); gates.delete(from); connKind.delete(from); }
       st.dataset.state = count ? "ok" : "wait";
       st.textContent = count ? `${count} phone connected` : "Waiting for a phone";
       if (!count) { inputMode = "kb"; calStep = 0; setHint(); if (screen === "game") pause("link"); }
@@ -527,9 +696,10 @@ function frame(now) {
     while (acc >= DT) { sim.step(DT); acc -= DT; }
     handleEvents();
     paintHud();
-    if (inputMode === "phone" && phoneKind === "camera" && invisibleSince !== null && now - invisibleSince > 700) pause("view");
+    const hid = hiddenPlayer(now);
+    if (hid !== null) pause("view", hid);
     if (inputMode === "phone" && now - lastPhoneMsg > 4000 && host?.connectedCount()) pause("link");
-  } else if (screen === "pause" && pauseReason === "view" && phoneVisible) {
+  } else if (screen === "pause" && pauseReason === "view" && hiddenPlayer(now + 1e6) === null) {
     resume();
   } else if (screen === "menu") {
     sim.step(dt * 0.5); // let the idle court breathe behind the menu
@@ -548,7 +718,13 @@ window.__airTennis = {
   get inputMode() { return inputMode; },
   get phoneKind() { return phoneKind; },
   get pauseReason() { return pauseReason; },
-  inject: (msg) => onPhoneMessage(msg),
+  inject: (msg, from = "local") => onPhoneMessage(msg, from),
+  outbox: [],
+  slotMap,
+  get maxSpeed() { return maxSpeed; },
+  measureFps(ms = 2000) {
+    return new Promise((res) => { let n = 0; const t0 = performance.now(); const f = () => { n++; if (performance.now() - t0 < ms) requestAnimationFrame(f); else res(Math.round((n * 1000) / (performance.now() - t0) * 10) / 10); }; requestAnimationFrame(f); });
+  },
   start: (m) => startMode(m),
   menu: () => toMenu(),
   fastForward(seconds) {
