@@ -24,12 +24,6 @@ form { display: flex; gap: 10px; }
 #code:focus { outline: none; border-color: var(--lime); }
 .btn { padding: 14px 22px; border-radius: 16px; border: 0; background: var(--lime); color: var(--ink); font-weight: 700; font-size: 18px; }
 .err { color: var(--bad); min-height: 22px; font-size: 15px; }
-.choice { display: flex; gap: 14px; align-items: flex-start; width: 100%; text-align: left; padding: 18px; margin-bottom: 12px; border-radius: 20px; border: 2px solid var(--edge); background: var(--panel); }
-.choice:first-of-type { border-color: var(--lime); box-shadow: 0 0 0 3px rgba(220, 255, 61, 0.15); }
-.choice:active { transform: scale(0.98); }
-.choice-ico { font-size: 30px; line-height: 1; }
-.choice strong { display: block; font-size: 20px; }
-.choice small { display: block; color: var(--muted); font-size: 15px; margin-top: 4px; line-height: 1.35; }
 .cam { position: relative; border-radius: 18px; overflow: hidden; background: #000; aspect-ratio: 4 / 3; margin-bottom: 14px; }
 .cam video, .cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
 .cam-note { position: absolute; left: 0; right: 0; bottom: 0; margin: 0; padding: 6px 10px; font-size: 12px; background: rgba(0, 0, 0, 0.55); color: var(--muted); }
@@ -56,3 +50,12 @@ form { display: flex; gap: 10px; }
 .grid4 { grid-template-columns: repeat(2, 1fr); }
 #body-row { flex-wrap: wrap; }
 .cam.is-back video, .cam.is-back canvas { transform: none; }
+
+/* start-camera view */
+.how { margin: 0 0 18px; padding-left: 22px; color: var(--muted); font-size: 17px; line-height: 1.45; }
+.how li { margin-bottom: 8px; }
+.how b { color: #fff; }
+.btn.big { width: 100%; font-size: 20px; padding: 18px; }
+.btn:disabled { opacity: 0.6; }
+.fine { color: var(--muted); font-size: 14px; margin-top: 12px; line-height: 1.4; }
+body:not([data-view="play"]) #chip-view { display: none; }

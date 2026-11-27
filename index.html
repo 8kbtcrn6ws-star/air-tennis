@@ -28,7 +28,7 @@
   <section id="menu" class="screen" aria-label="Main menu">
     <div class="menu-left">
       <h1 class="wordmark"><span class="ball-glyph" aria-hidden="true"></span>Air <b>Tennis</b></h1>
-      <p class="tagline">Stand your phone up and play with your whole body, or swing the phone like a racket.</p>
+      <p class="tagline">Prop your phone up and play with your whole body. Your arm is the racket.</p>
       <div class="modes" role="list">
         <p class="modes-head">Play</p>
         <button class="mode" data-nav data-mode="match" role="listitem">
@@ -88,30 +88,29 @@
       <p id="link-status" class="chip" data-state="wait">Starting phone link…</p>
       <ol class="how">
         <li>Scan with your phone camera, or open <b id="phone-url">phone.html</b> and type the code.</li>
-        <li><b>Body camera:</b> stand the phone up 3 m away; 1 or 2 players. <b>Swing your phone:</b> hold it like a racket.</li>
-        <li>Follow the quick setup on the phone, then play.</li>
+        <li>Prop the phone up about <b>2-3 m</b> away, facing you. 1 or 2 players, <b>whole body in view</b> (head to feet).</li>
+        <li>Tap <b>Start camera</b>, follow the quick setup, then wind up and swing.</li>
       </ol>
-      <p class="kb-hint">No phone? Player 1: <kbd>←</kbd><kbd>→</kbd> + <kbd>Space</kbd>. Player 2: <kbd>A</kbd><kbd>D</kbd> + <kbd>W</kbd>.</p>
     </aside>
   </section>
 
   <!-- CALIBRATION -->
   <section id="cal" class="screen overlay" aria-label="Camera setup" hidden>
     <div class="panel cal-panel">
-      <h2>Racket setup</h2>
+      <h2>Body camera setup</h2>
       <p class="sub" id="cal-sub">Follow the steps on your phone. This screen shows what it picks up.</p>
       <ol class="steps" id="cal-steps">
         <li data-step="1"><span class="tick"></span>Phone connected</li>
-        <li data-step="2"><span class="tick"></span><span data-cam>Camera on and you're in view</span><span data-body>Step into view (whole body)</span><span data-mot>Motion sensors on</span></li>
-        <li data-step="3"><span class="tick"></span><span data-cam>Raise your racket hand</span><span data-body>Raise your racket hand above your head</span><span data-mot>Hold the phone like a racket</span></li>
-        <li data-step="4"><span class="tick"></span><span data-cam>Move your hand left, then right</span><span data-body>Step left, then right</span><span data-mot>Tilt left, then right to aim</span></li>
-        <li data-step="5"><span class="tick"></span>Swing a forehand to confirm</li>
+        <li data-step="2"><span class="tick"></span>Camera on, body tracking loaded</li>
+        <li data-step="3"><span class="tick"></span>Whole body in view</li>
+        <li data-step="4"><span class="tick"></span>Racket hand raised above the head</li>
+        <li data-step="5"><span class="tick"></span>Wind up and swing a forehand</li>
       </ol>
       <div class="meter" aria-hidden="true"><div class="meter-track"><div id="cal-dot" class="meter-dot"></div></div><span>Left</span><span>Right</span></div>
       <p id="cal-msg" class="cal-msg">Waiting for your phone…</p>
       <div class="row">
         <button class="btn" data-nav data-act="cal-done">Done</button>
-        <button class="btn ghost" data-nav data-act="cal-skip">Skip, use keyboard</button>
+        <button class="btn ghost" data-nav data-act="cal-skip">Skip setup</button>
       </div>
     </div>
   </section>
@@ -133,7 +132,6 @@
       <div class="timing-bar"><span class="tz early">Early</span><span class="tz perfect">Perfect</span><span class="tz late">Late</span><i id="timing-mark"></i></div>
       <div class="timing-counts" id="timing-counts"></div>
     </div>
-    <div class="chip input-chip" id="input-chip" data-state="kb">Keyboard</div>
     <div class="banner" id="banner" aria-live="polite"></div>
     <div class="callout" id="callout"></div>
     <div class="hint" id="hint"></div>

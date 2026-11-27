@@ -501,7 +501,7 @@ export function createSim(opts = {}) {
     emit("feedback", { text, kind: "miss", id: pl.id, result });
   }
 
-  // A swing from keyboard, mouse, phone or camera. dir -1..1 (TV left..right), power 0..1.
+  // A swing from the body camera (or the hidden test/keyboard input). dir -1..1 (TV left..right), power 0..1.
   // o: { kind: "fh"|"bh"|"oh"|"sv"|undefined, lift: -1..1 }
   sim.swing = function swing(dir = 0, power = 0.6, source = "kb", id = 0, o = {}) {
     const pl = players[id];

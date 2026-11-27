@@ -177,7 +177,7 @@ function pause(reason, who = null) {
   if (screen !== "game") return;
   pauseReason = reason;
   const seeWho = who === null || !TWO() ? "you" : playerName(who);
-  const titles = { user: ["Paused", ""], view: [`Can't see ${seeWho}`, "Step into view of the phone camera so it can see your whole body (or your hand in hand mode). The game carries on by itself when you're back."], link: ["Phone disconnected", "The phone stopped sending. Check it's awake and on the Air Tennis page, or carry on with the keyboard."] };
+  const titles = { user: ["Paused", ""], view: [`Can't see ${seeWho}`, "Step into view of the phone camera so it can see your whole body, head to feet. The game carries on by itself when you're back."], link: ["Phone disconnected", "The phone stopped sending. Check it's awake, propped up and on the Air Tennis page."] };
   const [t, m] = titles[reason] || titles.user;
   $("pause-title").textContent = t;
   $("pause-msg").textContent = m;
@@ -309,14 +309,7 @@ function popup(text, x, y, z) {
   setTimeout(() => el.remove(), 950);
 }
 function setHint() {
-  const phone = inputMode === "phone";
-  const kindText = { motion: "Swing your phone like a racket", camera: "Swing your hand at the phone", body: "Wind up and swing: your arm is the racket" };
-  let how = phone ? kindText[phoneKind] || kindText.motion : "← → move · Space swing · hold Shift for power · or use the mouse";
-  if (TWO() && !phone) how = "P1: ← → + Space · P2: A D + W";
-  $("hint").textContent = `${how} · Esc pause`;
-  const chip = $("input-chip");
-  chip.dataset.state = phone ? "ok" : "kb";
-  chip.textContent = phone ? ({ motion: "Phone racket", camera: "Phone camera", body: "Body camera" }[phoneKind] || "Phone") : "Keyboard / mouse";
+  $("hint").textContent = "Wind up and swing: your arm is the racket";
 }
 
 // ---------- sim events -> effects, sound, stats ----------
@@ -501,7 +494,7 @@ function updateKeyboardInput(dt) {
 // ---------- phone link ----------
 let host = null;
 let inputMode = "kb";
-let phoneKind = "motion";
+let phoneKind = "body";
 let phoneVisible = true;
 let lastPhonePos = -1e9;
 let lastPhoneMsg = -1e9;
@@ -513,7 +506,7 @@ const gates = new Map();   // one packet gate per phone connection
 const slotMap = createSlotMap();
 const lastSlotPos = {};    // player id -> last pos time
 const seen = {};           // player id -> { visible, since }
-const connKind = new Map(); // from -> "motion" | "camera" | "body"
+const connKind = new Map(); // from -> "body"
 function gateFor(from) {
   let g = gates.get(from);
   if (!g) { g = from === "local" ? gate : createPacketGate(); gates.set(from, g); }
@@ -521,7 +514,7 @@ function gateFor(from) {
 }
 // Which player does this packet drive? Phones claim player slots when they say which mode they use.
 function playerFor(from, s = 0) {
-  if (!slotMap.get(from)) slotMap.assign(from, connKind.get(from) || "motion", 1);
+  if (!slotMap.get(from)) slotMap.assign(from, connKind.get(from) || "body", 1);
   return slotMap.player(from, s);
 }
 function sendTo(from, msg) {
@@ -541,8 +534,6 @@ function onPhoneMessage(raw, from = "local") {
       connKind.set(from, m.m);
       const a = slotMap.assign(from, m.m, m.m === "body" ? m.n : 1);
       sendTo(from, a.error ? { t: "slots", error: "full" } : { t: "slots", p: a.players, cam: a.cam });
-      document.body.classList.toggle("is-motion", phoneKind === "motion");
-      document.body.classList.toggle("is-body", phoneKind === "body");
       setHint();
       break;
     }
@@ -613,8 +604,7 @@ function setCal(step) {
     li.classList.toggle("is-done", n <= step);
     li.classList.toggle("is-now", n === step + 1);
   });
-  const body = phoneKind === "body";
-  const msgs = ["Waiting for your phone…", "Connected. Starting sensors on the phone…", phoneKind === "motion" ? "Hold the phone like a racket handle." : body ? "Step back until the camera sees your whole body." : "Raise your racket hand so the camera sees it.", phoneKind === "motion" ? "Tilt the phone left, then right." : body ? "Raise your racket hand above your head." : "Move your hand left, then right.", body ? "Wind up and swing a forehand." : "Now swing a forehand.", "All set! Pick a mode to play."];
+  const msgs = ["Waiting for your phone…", "Loading body tracking on the phone…", "Step back until the camera sees your whole body.", "Raise your racket hand above your head.", "Wind up and swing a forehand.", "All set! Pick a mode to play."];
   $("cal-msg").textContent = msgs[Math.min(step, 5)];
   if (step >= 5) {
     inputMode = "phone";
@@ -665,7 +655,7 @@ async function startLink() {
     window.__airTennis.code = code;
   } catch (err) {
     st.dataset.state = "bad";
-    st.textContent = "Phone link offline. Keyboard and mouse still work.";
+    st.textContent = "Phone link offline. Check the internet connection, then reload this page.";
     window.__airTennis.linkError = err?.message || String(err);
   }
 }

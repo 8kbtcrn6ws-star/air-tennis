@@ -1,33 +1,28 @@
-// Air Tennis phone page. Two ways to play:
-//  - "Swing your phone": DeviceMotion sensors detect swings, sideways tilt aims.
-//  - "Phone on table": front camera + MediaPipe hand tracking, all on the phone.
-// Either way the phone only sends small packets: {t:"pos"} ~30 Hz and {t:"swing"} events.
+// Air Tennis phone page: the phone is a body-tracking camera. Stand it up 2-3 m from the players (1 or 2 people);
+// MediaPipe PoseLandmarker runs on the phone and only small packets go to the TV:
+// {t:"pos"} ~30 Hz per player and {t:"swing"} events. Video never leaves the phone.
 import { PhoneClient, normalizeCode } from "./net.js";
-import { createMotionSwingDetector, createTiltAim } from "./motion.js";
-import { createSwingDetector, mapX } from "./swing.js";
 import { personFrom, createPoseSwingDetector, createPoseTracker, raisedHand, slotX, POSE_THRESH } from "./pose.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
-const TEST = params.get("test") === "1"; // headless tests: no PeerJS, packets go to window.__phone.sent
+const TEST = params.get("test") === "1"; // headless tests only: no PeerJS, packets go to window.__phone.sent
 const MP_VER = "0.10.14";
 // Tests only: the headless box runs pose tracking at ~3 fps, so the fake camera clip is played in slow motion
 // and the pose code runs on matching slowed-down time (slowmo=6 -> 1 real second = 1/6 s of movement).
 const SLOWMO = TEST ? Math.min(20, Math.max(1, Number(params.get("slowmo")) || 1)) : 1;
 const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/vision_bundle.mjs`;
 const MP_WASM = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/wasm`;
-const HAND_MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
-const CAM_THRESH = { easier: 1.1, normal: 1.5, harder: 2.1 };
 const POSE_MODEL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 const NOCAM = TEST && params.get("nocam") === "1"; // tests: feed synthetic poses through __phone.feedPoses
 
 const client = new PhoneClient();
 const sent = [];
-const state = { view: "join", mode: null, step: 0, connected: false, sens: "normal", lastSwing: null, handSeen: false, camReady: false, error: null };
-const motion = createMotionSwingDetector({ sensitivity: state.sens });
-const tilt = createTiltAim();
-const camSwing = createSwingDetector({ threshold: CAM_THRESH.normal });
-let range = { min: 0.25, max: 0.75 };
+const state = { view: "join", mode: null, step: 0, connected: false, sens: "normal", camReady: false, error: null, loading: "" };
+let video = null;
+let ctx2d = null;
+let lastVideoTime = -1;
+const round = (v) => Math.round(v * 1000) / 1000;
 
 function send(msg) {
   if (TEST) { sent.push({ ...msg, at: performance.now() }); if (sent.length > 2000) sent.shift(); return; }
@@ -38,7 +33,7 @@ function chip(id, st, text) { const c = $(id); c.dataset.state = st; if (text) c
 function show(view) {
   state.view = view;
   document.body.dataset.view = view;
-  for (const v of ["join", "choose", "play"]) $("v-" + v).hidden = v !== view;
+  for (const v of ["join", "start", "play"]) $("v-" + v).hidden = v !== view;
 }
 function buzz(ms) { try { navigator.vibrate?.(ms); } catch { /* iPhone: no vibration API, skip */ } }
 
@@ -54,7 +49,7 @@ async function join(code) {
     if (!TEST) await client.connect(code);
     state.connected = true;
     chip("chip-link", "ok", "TV " + normalizeCode(code));
-    show("choose");
+    show("start"); // iPhone Safari needs a tap before the camera can start
   } catch (err) {
     chip("chip-link", "bad", "TV");
     $("join-err").textContent = err?.message || "Couldn't reach the TV. Check the code.";
@@ -67,7 +62,7 @@ $("join-form").addEventListener("submit", (e) => {
   join(code);
 });
 client.on("message", (m) => {
-  if (m.t === "cfg" && ["easier", "normal", "harder"].includes(m.sens)) setSens(m.sens, false);
+  if (m.t === "cfg" && ["easier", "normal", "harder"].includes(m.sens)) setSens(m.sens);
   if (m.t === "buzz" && (m.p === undefined || !body.players.length || body.players.includes(m.p))) buzz(m.k === "hit" ? 25 : 12);
   if (m.t === "slots") onSlots(m);
 });
@@ -77,7 +72,7 @@ client.on("close", () => {
   setStep(state.step, "Lost the TV", "Reload this page and enter the code again.");
 });
 
-// ---------- shared setup steps (match the TV's checklist) ----------
+// ---------- setup steps (match the TV's checklist) ----------
 function setStep(n, title, help) {
   state.step = n;
   $("step-label").textContent = n >= 5 ? "Ready" : `Setup · step ${Math.min(n + 1, 5)} of 5`;
@@ -85,256 +80,121 @@ function setStep(n, title, help) {
   $("step-help").textContent = help || "";
   send({ t: "cal", step: n });
 }
-function setSens(v, tellTv = true) {
+function setSens(v) {
   state.sens = v;
   $("sens").value = v;
-  motion.setSensitivity(v);
-  camSwing.setThreshold(CAM_THRESH[v]);
   for (const d of body.dets) d.setThreshold(POSE_THRESH[v]);
-  if (tellTv) { /* the phone's own choice; the TV just follows the swings */ }
 }
 $("sens").addEventListener("change", (e) => setSens(e.target.value));
 document.querySelectorAll("[data-menu]").forEach((b) => b.addEventListener("click", () => send({ t: "menu", k: b.dataset.menu })));
-$("recal").addEventListener("click", () => (state.mode === "motion" ? beginMotionCal() : state.mode === "body" ? beginBodyCal() : beginCameraCal()));
-
-function onSwing(dir, power, extra = "") {
-  state.lastSwing = { dir, power, at: performance.now() };
-  send({ t: "swing", dir, spd: power, ts: Date.now() });
-  const side = dir < -0.33 ? "left" : dir > 0.33 ? "right" : "centre";
-  $("swing-read").textContent = `Swing! power ${Math.round(power * 100)}% · aim ${side}${extra}`;
-  buzz(15);
-}
+$("recal").addEventListener("click", () => { if (state.mode === "body") beginBodyCal(); });
 function paintMeter(x) { $("meter-dot").style.left = ((x + 1) * 50) + "%"; }
 
-// ---------- mode 1: swing your phone ----------
-let calPhase = null;
-let calStillSince = null;
-let sawLeft = false, sawRight = false;
-let lastPosSend = 0;
-function onMotion(e) {
-  const t = performance.now();
-  const s = {
-    t,
-    rotationRate: e.rotationRate ? { alpha: e.rotationRate.alpha, beta: e.rotationRate.beta, gamma: e.rotationRate.gamma } : null,
-    acceleration: e.acceleration ? { x: e.acceleration.x, y: e.acceleration.y, z: e.acceleration.z } : null
-  };
-  const g = e.accelerationIncludingGravity;
-  const x = tilt.push(g ? g.x : NaN);
-  state.sensorOk = true;
-  chip("chip-sensor", "ok", "Sensors");
-  const sw = motion.push(s);
-  paintMeter(x);
-  if (calPhase === "still") {
-    const rate = s.rotationRate ? Math.hypot(s.rotationRate.alpha || 0, s.rotationRate.beta || 0, s.rotationRate.gamma || 0) : 0;
-    if (rate < 40) { calStillSince ??= t; if (t - calStillSince > 900) { tilt.centreNow(); calPhase = "tilt"; setStep(3, "Tilt left, then right", "Tilt the phone sideways to move your player. Left first, then right."); } }
-    else calStillSince = null;
-  } else if (calPhase === "tilt") {
-    if (x < -0.5) sawLeft = true;
-    if (x > 0.5 && sawLeft) sawRight = true;
-    if (sawLeft && sawRight) { calPhase = "swing"; setStep(4, "Swing a forehand", "Swing the phone like a forehand shot. Keep a tight grip (use a wrist strap if you have one)."); }
-  } else if (calPhase === "swing" && sw) {
-    motion.calibrateForehand(sw.vec);
-    calPhase = "done";
-    setStep(5, "You're ready!", "Swing to hit. Tilt to move. Pick a mode below or on the TV.");
-    $("swing-read").textContent = `Forehand saved · power ${Math.round(sw.power * 100)}%`;
-    buzz(30);
-    return;
-  }
-  if (calPhase === "done") {
-    if (sw) onSwing(clampDir(x * 0.7 + sw.side * 0.35), sw.power, sw.side > 0.3 ? " · forehand" : sw.side < -0.3 ? " · backhand" : "");
-    if (t - lastPosSend > 33) { lastPosSend = t; send({ t: "pos", x: round(x), y: 0, v: true }); }
-  }
-}
-const clampDir = (v) => Math.max(-1, Math.min(1, round(v)));
-const round = (v) => Math.round(v * 1000) / 1000;
-
-async function startMotion() {
-  $("choose-err").textContent = "";
-  try {
-    const DME = window.DeviceMotionEvent;
-    if (!DME) throw new Error("This phone doesn't report motion. Try “Phone on table”.");
-    if (typeof DME.requestPermission === "function") {
-      const r = await DME.requestPermission(); // iPhone: must be called from this tap
-      if (r !== "granted") throw new Error("Motion access was declined. On iPhone: reload the page and tap Allow.");
-    }
-    window.addEventListener("devicemotion", onMotion);
-    state.mode = "motion";
-    send({ t: "mode", m: "motion" });
-    $("cam-wrap").hidden = true;
-    $("chip-view").hidden = true;
-    show("play");
-    keepAwake();
-    beginMotionCal();
-    setTimeout(() => { if (!state.sensorOk) { chip("chip-sensor", "bad", "No sensors"); setStep(1, "No motion data", "This browser isn't sending motion data. Try Safari or Chrome over https, or use “Phone on table”."); } }, 2500);
-  } catch (err) {
-    $("choose-err").textContent = err?.message || String(err);
-  }
-}
-function beginMotionCal() {
-  calPhase = "still"; calStillSince = null; sawLeft = sawRight = false;
-  setStep(2, "Hold it like a racket", "Grip the phone like a racket handle, screen facing sideways, and hold still for a second.");
+// ---------- camera errors, in words a person can act on ----------
+function cameraError(err) {
+  const n = err?.name || "";
+  if (n === "NotAllowedError" || n === "SecurityError") return "Camera access is blocked. On iPhone: open Settings > Safari > Camera and choose Allow (or tap aA in Safari's address bar > Website Settings > Camera > Allow). Then reload this page.";
+  if (n === "NotFoundError" || n === "OverconstrainedError") return "No camera found on this device.";
+  if (n === "NotReadableError" || n === "AbortError") return "The camera is busy. Close other apps that use it (FaceTime, Camera), then tap Start camera again.";
+  if (!window.isSecureContext) return "The camera only works on the https:// address of Air Tennis.";
+  return err?.message || String(err);
 }
 
-// ---------- mode 2: phone on table (camera) ----------
-let landmarker = null;
-let video = null;
-let ctx2d = null;
-let lastSeen = 0;
-let visible = false;
-let camCal = null;
-let camCalStart = 0;
-let lastVideoTime = -1;
-
-async function startCamera() {
-  $("choose-err").textContent = "";
-  try {
-    if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera needs Safari or Chrome on an https page.");
-    video = $("video");
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } } });
-    video.srcObject = stream;
-    await video.play();
-    state.mode = "camera";
-    send({ t: "mode", m: "camera" });
-    $("cam-wrap").hidden = false;
-    $("chip-view").hidden = false;
-    chip("chip-sensor", "wait", "Camera");
-    show("play");
-    keepAwake();
-    setStep(1, "Loading hand tracking…", "First time takes a few seconds.");
-    const vision = await import(MP_URL);
-    const fileset = await vision.FilesetResolver.forVisionTasks(MP_WASM);
-    const make = (delegate) => vision.HandLandmarker.createFromOptions(fileset, { baseOptions: { modelAssetPath: HAND_MODEL, delegate }, runningMode: "VIDEO", numHands: 1, minHandDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-    try { landmarker = await make("GPU"); } catch { landmarker = await make("CPU"); }
-    state.camReady = true;
-    chip("chip-sensor", "ok", "Camera");
-    ctx2d = $("overlay").getContext("2d");
-    beginCameraCal();
-    requestAnimationFrame(camLoop);
-  } catch (err) {
-    state.error = err?.message || String(err);
-    $("choose-err").textContent = err?.name === "NotAllowedError" ? "Camera access was declined. Allow the camera in Safari settings, then reload." : state.error;
-    show("choose");
-  }
-}
-function beginCameraCal() {
-  camCal = "hand"; range = { min: 1, max: 0 }; camCalStart = performance.now();
-  setStep(2, "Raise your racket hand", "Stand about 2 m back so the camera sees your hand. Open your hand toward the phone.");
-}
-const HAND_LINKS = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
-function drawHand(lms) {
-  const c = $("overlay");
-  if (c.width !== video.videoWidth) { c.width = video.videoWidth || 640; c.height = video.videoHeight || 480; }
-  ctx2d.clearRect(0, 0, c.width, c.height);
-  if (!lms) return;
-  ctx2d.strokeStyle = "#3ee8ff";
-  ctx2d.lineWidth = 4;
-  ctx2d.beginPath();
-  for (const [a, b] of HAND_LINKS) { ctx2d.moveTo(lms[a].x * c.width, lms[a].y * c.height); ctx2d.lineTo(lms[b].x * c.width, lms[b].y * c.height); }
-  ctx2d.stroke();
-  ctx2d.fillStyle = "#dcff3d";
-  for (const p of lms) { ctx2d.beginPath(); ctx2d.arc(p.x * c.width, p.y * c.height, 5, 0, Math.PI * 2); ctx2d.fill(); }
-}
-function camLoop() {
-  if (!landmarker || !video) return;
-  const now = performance.now();
-  if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
-    lastVideoTime = video.currentTime;
-    let res = null;
-    try { res = landmarker.detectForVideo(video, now); } catch (e) { state.error = String(e?.message || e); }
-    const lms = res?.landmarks?.[0];
-    drawHand(lms);
-    if (lms) {
-      lastSeen = now;
-      state.handSeen = true;
-      // Mirror x so moving your hand to your right moves the player right.
-      const wrist = { x: 1 - lms[0].x, y: lms[0].y };
-      const palm = { x: 1 - (lms[0].x + lms[5].x + lms[17].x) / 3, y: (lms[0].y + lms[5].y + lms[17].y) / 3 };
-      handleHand(wrist, palm, now);
-    }
-    const v = now - lastSeen < 500;
-    if (v !== visible) { visible = v; send({ t: "vis", v }); chip("chip-view", v ? "ok" : "bad", v ? "In view" : "Not in view"); }
-  }
-  requestAnimationFrame(camLoop);
-}
-const trace = [];
-function handleHand(wrist, palm, now) {
-  trace.push([Math.round(now), round(wrist.x), round(wrist.y)]);
-  if (trace.length > 300) trace.shift();
-  const sw = camSwing.push(wrist.x, wrist.y, now);
-  if (camCal === "hand") {
-    if (now - camCalStart > 400) { camCal = "range"; range = { min: palm.x, max: palm.x }; setStep(3, "Move left, then right", "Slide your hand all the way to your left, then all the way to your right."); }
-  } else if (camCal === "range") {
-    range.min = Math.min(range.min, palm.x);
-    range.max = Math.max(range.max, palm.x);
-    paintMeter(palm.x * 2 - 1);
-    if (range.max - range.min > 0.3) { camCal = "swing"; setStep(4, "Swing to confirm", "Swing your hand fast, like a forehand."); }
-  } else if (camCal === "swing" && sw) {
-    camCal = "done";
-    setStep(5, "You're ready!", "Swing your hand to hit. Move it left and right to move your player.");
-    $("swing-read").textContent = `Swing detected · power ${Math.round(sw.power * 100)}%`;
-  } else if (camCal === "done") {
-    const x = mapX(palm.x, range);
-    paintMeter(x);
-    if (sw) onSwing(sw.dir, sw.power);
-    if (now - lastPosSend > 33) { lastPosSend = now; send({ t: "pos", x: round(x), y: round(palm.y * 2 - 1), v: true }); }
-  }
-}
-
-// ---------- mode 3: body camera (MediaPipe PoseLandmarker, 1 or 2 people) ----------
-const body = { n: 1, tracker: null, dets: [], lastSeen: [0, 0], visible: [false, false], cal: null, calSince: 0, raiseSince: [0, 0], calDone: [false, false], swingDone: [false, false], lastPos: [0, 0], players: [], facing: "user", landmarker: null, people: 0, slots: [], lastSwings: [] };
+// ---------- the body camera (MediaPipe PoseLandmarker, 1 or 2 people, detected automatically) ----------
+const body = { n: 2, fixedN: 0, tracker: null, dets: [], lastSeen: [0, 0], visible: [false, false], cal: null, calSince: 0, countSince: 0, countN: 0, raiseSince: [0, 0], calDone: [false, false], swingDone: [false, false], lastPos: [0, 0], players: [], facing: "user", landmarker: null, people: 0, slots: [], lastSwings: [] };
 const SLOT_COL = ["#d9ef4a", "#7fd0ff"];
 
-async function startBody(n) {
-  $("choose-err").textContent = "";
+// n = people in front of this phone. Until setup has counted them, track up to 2.
+function setPeople(n) {
+  body.n = n;
+  body.tracker = createPoseTracker({ slots: n });
+  body.dets = Array.from({ length: n }, () => createPoseSwingDetector({ threshold: POSE_THRESH[state.sens] }));
+  body.visible = [false, false];
+  $("hand-1").hidden = n < 2;
+  send({ t: "mode", m: "body", n });
+  paintHands();
+}
+
+// Must run from the Start camera tap: iPhone Safari only shows the camera prompt from a user gesture.
+async function startBody(forceN) {
+  $("start-err").textContent = "";
+  $("start-btn").disabled = true;
   try {
-    body.n = n;
-    body.tracker = createPoseTracker({ slots: n });
-    body.dets = Array.from({ length: n }, () => createPoseSwingDetector({ threshold: POSE_THRESH[state.sens] }));
-    body.calDone = [false, false]; body.swingDone = [false, false];
+    if (!NOCAM) {
+      if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error("This browser can't use the camera. Open the page in Safari or Chrome."), { name: window.isSecureContext ? "Unsupported" : "SecurityError" });
+      await openCamera(); // first await in the tap handler -> the permission prompt
+    }
+    body.fixedN = forceN === 1 || forceN === 2 ? forceN : 0;
     state.mode = "body";
-    send({ t: "mode", m: "body", n });
-    $("cam-wrap").hidden = false;
-    $("chip-view").hidden = false;
-    $("body-row").hidden = false;
-    $("hand-1").hidden = n < 2;
+    setPeople(body.fixedN || 2);
     show("play");
     keepAwake();
+    chip("chip-cam", "ok", "Camera");
     if (!NOCAM) {
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera needs Safari or Chrome on an https page.");
-      await openCamera();
-      setStep(1, "Loading body tracking…", "First time downloads about 15 MB. After that it's cached.");
+      $("cam-msg").hidden = false; $("cam-msg").className = "cam-msg"; $("cam-msg").textContent = "Loading body tracking…";
+      setStep(1, "Loading body tracking…", "Starting the tracking engine. The first time takes a few seconds.");
       const vision = await import(MP_URL);
       const fileset = await vision.FilesetResolver.forVisionTasks(MP_WASM);
-      const make = (delegate) => vision.PoseLandmarker.createFromOptions(fileset, { baseOptions: { modelAssetPath: POSE_MODEL, delegate }, runningMode: "VIDEO", numPoses: n, minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5 });
+      const model = await fetchWithProgress(POSE_MODEL, (pct) => {
+        state.loading = `${pct}%`;
+        $("cam-msg").textContent = `Loading body tracking… ${pct}%`;
+        setStep(1, `Loading body tracking… ${pct}%`, "Downloading the pose model (about 5 MB, only the first time).");
+      });
+      const make = (delegate) => vision.PoseLandmarker.createFromOptions(fileset, { baseOptions: { modelAssetBuffer: model, delegate }, runningMode: "VIDEO", numPoses: 2, minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5 });
       try { body.landmarker = await make("GPU"); state.delegate = "GPU"; } catch { body.landmarker = await make("CPU"); state.delegate = "CPU"; }
       ctx2d = $("overlay").getContext("2d");
     }
     state.camReady = true;
-    chip("chip-sensor", "ok", "Camera");
     beginBodyCal();
     if (!NOCAM) requestAnimationFrame(poseLoop);
   } catch (err) {
-    state.error = err?.message || String(err);
-    $("choose-err").textContent = err?.name === "NotAllowedError" ? "Camera access was declined. Allow the camera in Safari settings, then reload." : state.error;
-    show("choose");
+    state.error = cameraError(err);
+    chip("chip-cam", "bad", "No camera");
+    $("start-err").textContent = state.error;
+    $("start-btn").disabled = false;
+    $("start-btn").textContent = "Try again";
+    show("start");
   }
+}
+async function fetchWithProgress(url, onPct) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Couldn't download body tracking (${res.status}). Check the internet connection and tap Try again.`);
+  const total = Number(res.headers.get("content-length")) || 0;
+  if (!res.body || !total) { onPct(50); const b = new Uint8Array(await res.arrayBuffer()); onPct(100); return b; }
+  const reader = res.body.getReader();
+  const parts = [];
+  let got = 0, last = -1;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    got += value.length;
+    const pct = Math.min(100, Math.round((got / total) * 100));
+    if (pct !== last) { last = pct; onPct(pct); }
+  }
+  const out = new Uint8Array(got);
+  let o = 0;
+  for (const v of parts) { out.set(v, o); o += v.length; }
+  return out;
 }
 async function openCamera() {
   video = $("video");
+  video.setAttribute("playsinline", ""); video.muted = true; video.autoplay = true;
   video.srcObject?.getTracks?.().forEach((t) => t.stop());
   const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: body.facing, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } } });
   video.srcObject = stream;
-  await video.play();
-  // The front camera is shown mirrored; the back camera isn't.
+  await video.play().catch(() => { /* autoplay+muted+playsinline normally plays; frames still arrive */ });
+  // The front camera is shown mirrored (like a mirror); the back camera isn't.
   $("cam-wrap").classList.toggle("is-back", body.facing === "environment");
 }
 function beginBodyCal() {
-  body.cal = "view"; body.calSince = 0; body.calDone = [false, false]; body.swingDone = [false, false];
-  setStep(2, body.n === 2 ? "Both players: step into view" : "Step into view", body.n === 2 ? "Stand side by side about 3 m from the phone, whole body in the picture. Left person = Player " + slotName(0) + "." : "Stand about 3 m from the phone so it sees you from head to feet.");
+  body.cal = "view"; body.calSince = 0; body.countSince = 0; body.countN = 0; body.calDone = [false, false]; body.swingDone = [false, false];
+  if (!body.fixedN && body.n !== 2) setPeople(2);
+  setStep(2, "Step into view", "Prop the phone up about 2-3 m away, facing you. 1 or 2 players stand side by side, whole body in the picture (head to feet). Left person = Player 1.");
 }
 function slotName(s) { return body.players[s] !== undefined ? body.players[s] + 1 : s + 1; }
 function onSlots(m) {
-  if (m.error) { $("choose-err").textContent = "This TV already has 2 camera phones."; setStep(state.step, "TV is full", "This TV already has 2 camera phones connected."); return; }
+  if (m.error) { setStep(state.step, "TV is full", "This TV already has 2 camera phones connected."); return; }
   body.players = m.p || [];
   const line = $("slot-line");
   if (state.mode === "body") {
@@ -361,6 +221,12 @@ function poseLoop() {
 function handlePoses(list, now) {
   const persons = list.map((lm) => { const p = personFrom(lm); if (p) p.raw = lm; return p; }).filter(Boolean);
   body.people = persons.length;
+  // Setup counts the people in front of the phone (1 or 2) once the count has been steady for a moment.
+  if (body.cal === "view" && !body.fixedN) {
+    const c = Math.min(2, persons.length);
+    if (c !== body.countN) { body.countN = c; body.countSince = now; }
+    else if (c >= 1 && c !== body.n && now - body.countSince > 800) { setPeople(c); body.calSince = 0; }
+  }
   const slots = body.tracker.update(persons, now);
   body.slots = slots.map((s) => ({ slot: s.slot, id: s.id, seen: !!s.person, cx: s.person ? round(s.person.cx) : null, full: !!s.person?.full }));
   for (const { slot: s, person: p } of slots) {
@@ -392,7 +258,7 @@ function handlePoses(list, now) {
   }
   const all = slots.every((x) => x.person);
   if (body.cal === "view") {
-    if (all) { body.calSince ||= now; if (now - body.calSince > 600) { body.cal = "raise"; setStep(3, "Raise your racket hand", body.n === 2 ? "Each player: hold your racket hand up above your head." : "Hold your racket hand up above your head for a moment."); } }
+    if (all) { body.calSince ||= now; if (now - body.calSince > (body.fixedN ? 600 : 1500)) { body.cal = "raise"; setStep(3, "Raise your racket hand", body.n === 2 ? "Each player: hold your racket hand up above your head." : "Hold your racket hand up above your head for a moment."); } }
     else body.calSince = 0;
   } else if (body.cal === "raise" && body.calDone.slice(0, body.n).every(Boolean)) {
     body.cal = "swing";
@@ -403,7 +269,7 @@ function handlePoses(list, now) {
   // Messages over the camera view.
   const msg = $("cam-msg");
   const missing = slots.filter((x) => !x.person).map((x) => x.slot);
-  if (!persons.length) { msg.hidden = false; msg.className = "cam-msg"; msg.textContent = body.n === 2 ? "Step into view (both players)" : "Step into view"; }
+  if (!persons.length) { msg.hidden = false; msg.className = "cam-msg"; msg.textContent = "Step into view"; }
   else if (missing.length) { msg.hidden = false; msg.className = "cam-msg"; msg.textContent = `Player ${slotName(missing[0])}: step into view (${missing[0] === 0 ? "left" : "right"} side)`; }
   else if (slots.some((x) => !x.person.full)) { msg.hidden = false; msg.className = "cam-msg soft"; msg.textContent = "Step back a little so your feet are in the picture"; }
   else msg.hidden = true;
@@ -451,12 +317,10 @@ for (const s of [0, 1]) $("hand-" + s).addEventListener("click", () => { const d
 let wakeLock = null;
 async function keepAwake() { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch { /* optional */ } }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state.mode) keepAwake(); });
-$("pick-motion").addEventListener("click", startMotion);
-$("pick-camera").addEventListener("click", startCamera);
-$("pick-body1").addEventListener("click", () => startBody(1));
-$("pick-body2").addEventListener("click", () => startBody(2));
+$("start-btn").addEventListener("click", () => startBody());
 
-window.__phone = { state, sent, trace, motion, tilt, camSwing, get range() { return range; }, join, body, startBody, feedPoses: (list, t) => handlePoses(list, t ?? performance.now()), onMessage: (m) => client.emit("message", m) };
+// Hidden test hook (not shown anywhere on the page).
+window.__phone = { state, sent, join, body, startBody, feedPoses: (list, t) => handlePoses(list, t ?? performance.now()), onMessage: (m) => client.emit("message", m) };
 
 const initial = codeFromLocation();
 if (initial) { $("code").value = initial; join(initial); }

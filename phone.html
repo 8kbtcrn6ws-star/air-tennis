@@ -18,8 +18,8 @@
     <h1><span class="ball" aria-hidden="true"></span>Air <b>Tennis</b></h1>
     <div class="chips">
       <span class="chip" id="chip-link" data-state="off">TV</span>
-      <span class="chip" id="chip-sensor" data-state="off">Sensors</span>
-      <span class="chip" id="chip-view" data-state="off" hidden>In view</span>
+      <span class="chip" id="chip-cam" data-state="off">Camera</span>
+      <span class="chip" id="chip-view" data-state="off">In view</span>
     </div>
   </header>
 
@@ -34,31 +34,22 @@
     <p id="join-err" class="err" role="alert"></p>
   </section>
 
-  <!-- 2. choose how to play -->
-  <section id="v-choose" class="view" hidden>
-    <h2>How do you want to play?</h2>
-    <button class="choice" id="pick-body1">
-      <span class="choice-ico" aria-hidden="true">🧍</span>
-      <span><strong>Body camera · 1 player</strong><small>Stand the phone up about 3 m away, facing you. Your arm is the racket. Video never leaves the phone.</small></span>
-    </button>
-    <button class="choice" id="pick-body2">
-      <span class="choice-ico" aria-hidden="true">🧍🧍</span>
-      <span><strong>Body camera · 2 players</strong><small>Two people side by side in front of one phone: left = one end of the court, right = the other.</small></span>
-    </button>
-    <button class="choice" id="pick-motion">
-      <span class="choice-ico" aria-hidden="true">🎾</span>
-      <span><strong>Swing your phone</strong><small>Hold the phone like a racket handle and swing it. Best feel. Uses the motion sensors.</small></span>
-    </button>
-    <button class="choice" id="pick-camera">
-      <span class="choice-ico" aria-hidden="true">📷</span>
-      <span><strong>Hand only (close up)</strong><small>The v1 mode: phone on the table, swing your hand at it. Front camera; video never leaves the phone.</small></span>
-    </button>
-    <p id="choose-err" class="err" role="alert"></p>
+  <!-- 2. start the camera (a tap is needed so iPhone Safari can ask for the camera) -->
+  <section id="v-start" class="view" hidden>
+    <h2>Body camera</h2>
+    <ol class="how">
+      <li>Prop this phone up about <b>2-3 m</b> from where you'll play, screen facing you.</li>
+      <li>1 or 2 players stand side by side with their <b>whole body</b> in the picture, head to feet.</li>
+      <li>Your arm is the racket: take it back, then swing through.</li>
+    </ol>
+    <button class="btn big" id="start-btn" type="button">Start camera</button>
+    <p class="fine">Your phone will ask to use the camera. Video stays on this phone. Nothing is uploaded or saved.</p>
+    <p id="start-err" class="err" role="alert"></p>
   </section>
 
   <!-- 3. setup / play -->
   <section id="v-play" class="view" hidden>
-    <div class="cam" id="cam-wrap" hidden>
+    <div class="cam" id="cam-wrap">
       <video id="video" playsinline muted autoplay></video>
       <canvas id="overlay"></canvas>
       <div class="cam-msg" id="cam-msg" hidden>Step into view</div>
@@ -88,7 +79,7 @@
         <button class="mini ghost" data-menu="menu">TV menu</button>
         <button class="mini ghost" id="recal">Redo setup</button>
       </div>
-      <div class="row" id="body-row" hidden>
+      <div class="row" id="body-row">
         <button class="mini ghost" id="skip-cal">Skip setup</button>
         <button class="mini ghost" id="flip-cam">Flip camera</button>
         <button class="mini ghost" id="hand-0">P1: right-handed</button>

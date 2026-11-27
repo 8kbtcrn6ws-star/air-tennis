@@ -76,8 +76,7 @@ body[data-screen="menu"] .vignette { background: linear-gradient(90deg, rgba(3, 
 .phone-card .chip { display: flex; width: fit-content; margin: 0 auto; }
 .how { margin: 1.4rem 0 0; padding-left: 1.6rem; font-size: 1.3rem; line-height: 1.45; color: var(--text-2); }
 .how li { margin-bottom: 0.5rem; }
-.how b { color: var(--text); word-break: break-all; }
-.kb-hint { font-size: 1.15rem; color: var(--muted); margin: 1rem 0 0; }
+.how b { color: var(--text); word-break: normal; }
 kbd { display: inline-block; padding: 0.05rem 0.5rem; margin: 0 0.15rem; border-radius: 0.35rem; border: 0.1rem solid var(--panel-edge); background: rgba(255, 255, 255, 0.08); font-family: inherit; font-size: 1.05rem; }
 
 /* ---------- panels ---------- */
@@ -123,10 +122,8 @@ kbd { display: inline-block; padding: 0.05rem 0.5rem; margin: 0 0.15rem; border-
 .sb-call { font-size: 1.4rem; font-weight: 700; color: var(--cyan); text-transform: uppercase; letter-spacing: 0.14em; }
 .sb-big { font-size: 4.4rem; font-weight: 700; line-height: 1; color: var(--lime); font-variant-numeric: tabular-nums; }
 .sb-sub { font-size: 1.4rem; color: var(--text-2); font-weight: 600; }
-.input-chip { position: absolute; bottom: 2.2rem; right: 2.8rem; background: rgba(4, 6, 15, 0.7); }
 .popup { position: absolute; font-size: 3.4rem; font-weight: 700; color: var(--lime); text-shadow: 0 0 1.2rem rgba(220, 255, 61, 0.8); transform: translate(-50%, -50%); animation: popup 900ms ease-out forwards; pointer-events: none; }
 @keyframes popup { from { opacity: 1; transform: translate(-50%, -50%) scale(0.7); } 30% { transform: translate(-50%, -90%) scale(1.15); } to { opacity: 0; transform: translate(-50%, -190%) scale(1); } }
-body.is-motion [data-cam], body:not(.is-motion) [data-mot], body.is-body [data-cam], body:not(.is-body) [data-body] { display: none; }
 .banner { position: absolute; top: 34%; left: 0; right: 0; text-align: center; font-size: 9rem; font-weight: 700; font-style: italic; text-transform: uppercase; letter-spacing: -0.02em; text-shadow: 0 0.5rem 2.5rem rgba(0, 0, 0, 0.6); opacity: 0; transform: scale(0.8); transition: opacity 160ms ease, transform 220ms cubic-bezier(.2, 1.6, .4, 1); }
 .banner.show { opacity: 1; transform: scale(1); }
 .banner.lime { color: var(--lime); }
@@ -206,7 +203,6 @@ body[data-screen="menu"] .vignette { background: linear-gradient(90deg, rgba(4, 
 .sbox-k { display: block; font-size: 0.95rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em; color: #9fb0d6; }
 .sbox-v { display: block; font-size: 2.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .sbox-v small { font-size: 1.1rem; color: #9fb0d6; margin-left: 0.4rem; font-weight: 600; }
-.input-chip { bottom: auto; top: 8.6rem; right: 2.6rem; }
 .hint { bottom: 1.2rem; font-size: 1.25rem; }
 .banner { font-style: normal; font-size: 7rem; letter-spacing: 0; }
 .banner.small { font-size: 4.2rem; }

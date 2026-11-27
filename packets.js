@@ -7,7 +7,7 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 export const MENU_KEYS = ["up", "down", "left", "right", "a", "b", "pause", "practice", "match", "rally", "menu", "restart", "match2", "rally2", "doubles", "training", "target"];
 export const SWING_KINDS = ["fh", "bh", "oh", "sv"];
-export const PHONE_MODES = ["motion", "camera", "body"];
+export const PHONE_MODES = ["body"];
 
 export function createPacketGate(opts = {}) {
   const now = opts.now || (() => performance.now());
