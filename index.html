@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Air Tennis</title>
-  <meta name="description" content="Air Tennis: swing your hand at your phone camera and play tennis on the TV.">
+  <meta name="description" content="Air Tennis: prop your phone up, step into view and play stadium tennis on the TV with your whole body.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="fonts/urbanist-700.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
   <meta property="og:image" content="art/air-tennis-cover.webp">
   <script type="importmap">
@@ -19,95 +20,134 @@
   }
   </script>
   <script src="game.js" type="module"></script>
+  <script src="ui.js" type="module"></script>
 </head>
 <body data-screen="loading">
   <canvas id="gl" aria-hidden="true"></canvas>
   <div class="vignette" aria-hidden="true"></div>
 
-  <!-- MAIN MENU -->
-  <section id="menu" class="screen" aria-label="Main menu">
-    <div class="menu-left">
-      <h1 class="wordmark"><span class="ball-glyph" aria-hidden="true"></span>Air <b>Tennis</b></h1>
-      <p class="tagline">Prop your phone up and play with your whole body. Your arm is the racket.</p>
-      <div class="modes" role="list">
-        <p class="modes-head">Play</p>
-        <button class="mode" data-nav data-mode="match" role="listitem">
-          <span class="mode-ico" aria-hidden="true">1P</span>
-          <span class="mode-txt"><strong>1P vs CPU</strong><small>A scored match against the computer.</small></span>
+  <!-- MAIN MENU: home (4 mode cards) / mode setup / settings, with the phone bar along the bottom -->
+  <section id="menu" class="screen" aria-label="Main menu" data-panel="home">
+    <header class="menu-top">
+      <h1 class="wordmark"><span class="ball-glyph" aria-hidden="true"></span><span>Air <b>Tennis</b></span></h1>
+      <p class="tagline">Prop your phone up. Your arm is the racket.</p>
+    </header>
+
+    <!-- home: the four mode cards -->
+    <div class="panel-home" data-panel-id="home">
+      <div class="cards" role="list">
+        <button class="card" data-nav data-open="match" role="listitem">
+          <svg class="card-art" viewBox="0 0 160 100" aria-hidden="true"><rect class="ct" x="20" y="10" width="120" height="80" rx="2"/><line class="ct" x1="20" y1="50" x2="140" y2="50"/><line class="ct" x1="80" y1="22" x2="80" y2="78"/><line class="ct" x1="35" y1="22" x2="125" y2="22"/><line class="ct" x1="35" y1="78" x2="125" y2="78"/><circle class="pl" cx="80" cy="86" r="5"/><circle class="op" cx="80" cy="14" r="5"/><path class="tr" d="M84 82 Q 110 50 82 18"/></svg>
+          <span class="card-name">Match</span>
+          <span class="card-sub">Scored tennis against the CPU or a friend.</span>
+          <span class="card-tags"><span>1P vs CPU</span><span>2P Match</span></span>
         </button>
-        <button class="mode" data-nav data-mode="match2" role="listitem">
-          <span class="mode-ico" aria-hidden="true">2P</span>
-          <span class="mode-txt"><strong>2P Match</strong><small>Two players, one phone camera. Real scoring.</small></span>
+        <button class="card" data-nav data-open="rally" role="listitem">
+          <svg class="card-art" viewBox="0 0 160 100" aria-hidden="true"><rect class="ct" x="20" y="10" width="120" height="80" rx="2"/><line class="ct" x1="20" y1="50" x2="140" y2="50"/><line class="ct" x1="80" y1="22" x2="80" y2="78"/><line class="ct" x1="35" y1="22" x2="125" y2="22"/><line class="ct" x1="35" y1="78" x2="125" y2="78"/><circle class="pl" cx="62" cy="86" r="5"/><circle class="pl2" cx="98" cy="14" r="5"/><path class="tr" d="M66 82 Q 40 50 94 18"/><path class="tr" d="M98 20 Q 128 52 66 84"/></svg>
+          <span class="card-name">Rally</span>
+          <span class="card-sub">Two players, no score. Keep it going.</span>
+          <span class="card-tags"><span>2 players</span></span>
         </button>
-        <button class="mode" data-nav data-mode="rally2" role="listitem">
-          <span class="mode-ico" aria-hidden="true">⇄</span>
-          <span class="mode-txt"><strong>2P Rally</strong><small>Two players keep a rally going. No score.</small></span>
+        <button class="card" data-nav data-open="doubles" role="listitem">
+          <svg class="card-art" viewBox="0 0 160 100" aria-hidden="true"><rect class="ct" x="20" y="10" width="120" height="80" rx="2"/><line class="ct" x1="20" y1="50" x2="140" y2="50"/><line class="ct" x1="80" y1="22" x2="80" y2="78"/><line class="ct" x1="35" y1="22" x2="125" y2="22"/><line class="ct" x1="35" y1="78" x2="125" y2="78"/><circle class="pl" cx="58" cy="84" r="5"/><circle class="pl" cx="102" cy="70" r="5"/><circle class="op" cx="58" cy="30" r="5"/><circle class="op" cx="102" cy="16" r="5"/></svg>
+          <span class="card-name">Doubles</span>
+          <span class="card-sub">2 v 2 with two phones. CPU fills empty spots.</span>
+          <span class="card-tags"><span>Up to 4 players</span></span>
         </button>
-        <button class="mode" data-nav data-mode="doubles" role="listitem">
-          <span class="mode-ico" aria-hidden="true">4P</span>
-          <span class="mode-txt"><strong>Doubles 2 v 2</strong><small>Up to 4 players with 2 camera phones. Empty spots are CPU.</small></span>
-        </button>
-        <p class="modes-head">Practise</p>
-        <button class="mode" data-nav data-mode="practice" role="listitem">
-          <span class="mode-ico" aria-hidden="true">◎</span>
-          <span class="mode-txt"><strong>Ball Machine</strong><small>A machine feeds you balls.</small></span>
-        </button>
-        <button class="mode" data-nav data-mode="training" role="listitem">
-          <span class="mode-ico" aria-hidden="true">⏱</span>
-          <span class="mode-txt"><strong>Training</strong><small>20 balls. Learn your timing: early, late, perfect.</small></span>
-        </button>
-        <button class="mode" data-nav data-mode="target" role="listitem">
-          <span class="mode-ico" aria-hidden="true">◉</span>
-          <span class="mode-txt"><strong>Target Practice</strong><small>Land it in the rings. 60 seconds.</small></span>
-        </button>
-        <button class="mode" data-nav data-mode="rally" role="listitem">
-          <span class="mode-ico" aria-hidden="true">∞</span>
-          <span class="mode-txt"><strong>Rally Challenge</strong><small>Keep it going. One miss ends it.</small></span>
+        <button class="card" data-nav data-open="practice" role="listitem">
+          <svg class="card-art" viewBox="0 0 160 100" aria-hidden="true"><rect class="ct" x="20" y="10" width="120" height="80" rx="2"/><line class="ct" x1="20" y1="50" x2="140" y2="50"/><circle class="rg" cx="80" cy="30" r="14"/><circle class="rg" cx="80" cy="30" r="6"/><circle class="pl" cx="80" cy="86" r="5"/><path class="tr" d="M80 80 Q 96 56 82 34"/></svg>
+          <span class="card-name">Practice</span>
+          <span class="card-sub">Ball machine, timing, targets and rally records.</span>
+          <span class="card-tags"><span>4 drills</span></span>
         </button>
       </div>
-      <div class="settings-row">
-        <button class="chip-btn" data-nav data-set="games">Match: <b id="set-games">first to 3 games</b></button>
-        <button class="chip-btn" data-nav data-set="flight">Ball flight: <b id="set-flight">Medium</b></button>
-        <button class="chip-btn" data-nav data-set="sens">Swing sensitivity: <b id="set-sens">Normal</b></button>
-        <button class="chip-btn" data-nav data-set="assist">Aim help: <b id="set-assist">On</b></button>
-        <button class="chip-btn" data-nav data-set="gfx">Graphics: <b id="set-gfx">High</b></button>
-        <button class="chip-btn" data-nav data-set="sound">Sound: <b id="set-sound">On</b></button>
-        <button class="chip-btn" data-nav data-set="music">Music: <b id="set-music">Off</b></button>
+      <div class="home-foot">
+        <dl class="records" id="records" aria-label="Your records">
+          <div data-rec><dt>Best rally</dt><dd id="st-rally">0</dd></div>
+          <div data-rec><dt>Target best</dt><dd id="st-target">0</dd></div>
+          <div data-rec><dt>Match wins</dt><dd id="st-wins">0</dd></div>
+          <div data-rec><dt>Missed shots</dt><dd id="st-missed">0</dd></div>
+        </dl>
+        <button class="btn ghost btn-settings" data-nav data-open="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Settings</button>
       </div>
-      <dl class="stats">
-        <div><dt>Best rally</dt><dd id="st-rally">0</dd></div>
-        <div><dt>Target best</dt><dd id="st-target">0</dd></div>
-        <div><dt>Match wins</dt><dd id="st-wins">0</dd></div>
-        <div><dt>Missed shots</dt><dd id="st-missed">0</dd></div>
-      </dl>
     </div>
-    <aside class="phone-card" aria-label="Phone controller">
-      <h2>Phone controller</h2>
+
+    <!-- mode setup: the variants of the chosen card + its settings (ui.js shows the right ones) -->
+    <div class="panel-setup sheet" data-panel-id="setup" hidden>
+      <div class="setup-col">
+        <p class="eyebrow" id="setup-eyebrow">Choose a game</p>
+        <h2 class="h1" id="setup-title">Match</h2>
+        <div class="variants" role="list">
+          <button class="variant" data-nav data-mode="match" data-family="match" role="listitem"><span class="v-txt"><strong>1P vs CPU</strong><small>A scored match against the computer.</small></span><span class="v-go">Start</span></button>
+          <button class="variant" data-nav data-mode="match2" data-family="match" role="listitem"><span class="v-txt"><strong>2P Match</strong><small>Two players, one phone camera. Real scoring.</small></span><span class="v-go">Start</span></button>
+          <button class="variant" data-nav data-mode="rally2" data-family="rally" role="listitem"><span class="v-txt"><strong>2P Rally</strong><small>Stand side by side and keep a rally going. No score.</small></span><span class="v-go">Start</span></button>
+          <button class="variant" data-nav data-mode="doubles" data-family="doubles" role="listitem"><span class="v-txt"><strong>Doubles 2 v 2</strong><small>Phone 1 is Players 1 + 2, phone 2 is Players 3 + 4.</small></span><span class="v-go">Start</span></button>
+          <button class="variant" data-nav data-mode="practice" data-family="practice" role="listitem"><span class="v-txt"><strong>Ball Machine</strong><small>A machine feeds you balls. Counts good shots.</small></span><span class="v-go">Start</span></button>
+          <button class="variant" data-nav data-mode="training" data-family="practice" role="listitem"><span class="v-txt"><strong>Training</strong><small>20 balls. Learn your timing: early, perfect, late.</small></span><span class="v-go">Start</span></button>
+          <button class="variant" data-nav data-mode="target" data-family="practice" role="listitem"><span class="v-txt"><strong>Target Practice</strong><small>60 seconds. Land the ball in the rings.</small></span><span class="v-go">Start</span></button>
+          <button class="variant" data-nav data-mode="rally" data-family="practice" role="listitem"><span class="v-txt"><strong>Rally Challenge</strong><small>The CPU always returns. One miss ends it.</small></span><span class="v-go">Start</span></button>
+        </div>
+      </div>
+      <div class="setup-col opts">
+        <p class="eyebrow">Game settings</p>
+        <div class="opt-list">
+          <button class="opt" data-nav data-set="games" data-for="match doubles"><span>Match length</span><b id="set-games">first to 3 games</b></button>
+          <button class="opt" data-nav data-set="flight" data-for="match rally doubles practice"><span>Ball flight</span><b id="set-flight">Medium</b></button>
+          <button class="opt" data-nav data-set="sens" data-for="match rally doubles practice"><span>Swing sensitivity</span><b id="set-sens">Normal</b></button>
+          <button class="opt" data-nav data-set="assist" data-for="match rally doubles practice"><span>Aim help</span><b id="set-assist">On</b></button>
+        </div>
+        <p class="opt-note">Press Enter on a setting to change it. Saved on this TV.</p>
+        <button class="btn ghost btn-back" data-nav data-back><span aria-hidden="true">‹</span> Back</button>
+      </div>
+    </div>
+
+    <!-- settings -->
+    <div class="panel-settings sheet narrow" data-panel-id="settings" hidden>
+      <p class="eyebrow">Settings</p>
+      <h2 class="h1">Display and sound</h2>
+      <div class="opt-list">
+        <button class="opt" data-nav data-set="gfx"><span>Graphics<small>Basic runs faster on older laptops</small></span><b id="set-gfx">High</b></button>
+        <button class="opt" data-nav data-set="sound"><span>Sound</span><b id="set-sound">On</b></button>
+        <button class="opt" data-nav data-set="music"><span>Music</span><b id="set-music">Off</b></button>
+      </div>
+      <button class="btn ghost btn-back" data-nav data-back><span aria-hidden="true">‹</span> Back</button>
+    </div>
+
+    <!-- phone connection bar -->
+    <aside class="phone-bar" aria-label="Connect your phone">
       <div class="qr-wrap"><div id="qr" class="qr is-empty" aria-hidden="true"></div></div>
-      <p class="code-line">Code <span id="code" class="code">····</span></p>
-      <p id="link-status" class="chip" data-state="wait">Starting phone link…</p>
-      <ol class="how">
-        <li>Scan with your phone camera, or open <b id="phone-url">phone.html</b> and type the code.</li>
-        <li>Prop the phone up about <b>2-3 m</b> away, facing you. 1 or 2 players, <b>whole body in view</b> (head to feet).</li>
-        <li>Tap <b>Start camera</b>, follow the quick setup, then wind up and swing.</li>
-      </ol>
+      <div class="pb-text">
+        <p class="pb-title">Connect your phone</p>
+        <p class="pb-how">Scan the code, or open <b id="phone-url">phone.html</b> and type the code. Prop it up 2–3 m away, whole body in view.</p>
+      </div>
+      <div class="pb-code">
+        <span class="label">Code</span>
+        <span id="code" class="code"></span>
+      </div>
+      <div class="pb-slots">
+        <ol class="slots" id="slots" aria-label="Players">
+          <li data-p="0">P1</li><li data-p="1">P2</li><li data-p="2">P3</li><li data-p="3">P4</li>
+        </ol>
+        <p id="link-status" class="status" data-state="wait">Connecting</p>
+      </div>
     </aside>
   </section>
 
   <!-- CALIBRATION -->
   <section id="cal" class="screen overlay" aria-label="Camera setup" hidden>
     <div class="panel cal-panel">
-      <h2>Body camera setup</h2>
+      <p class="eyebrow">Body camera</p>
+      <h2 class="h1">Camera setup</h2>
       <p class="sub" id="cal-sub">Follow the steps on your phone. This screen shows what it picks up.</p>
       <ol class="steps" id="cal-steps">
-        <li data-step="1"><span class="tick"></span>Phone connected</li>
-        <li data-step="2"><span class="tick"></span>Camera on, body tracking loaded</li>
-        <li data-step="3"><span class="tick"></span>Whole body in view</li>
-        <li data-step="4"><span class="tick"></span>Racket hand raised above the head</li>
-        <li data-step="5"><span class="tick"></span>Wind up and swing a forehand</li>
+        <li data-step="1"><span class="tick" aria-hidden="true"></span>Phone connected</li>
+        <li data-step="2"><span class="tick" aria-hidden="true"></span>Camera on, body tracking loaded</li>
+        <li data-step="3"><span class="tick" aria-hidden="true"></span>Whole body in view</li>
+        <li data-step="4"><span class="tick" aria-hidden="true"></span>Racket hand raised above the head</li>
+        <li data-step="5"><span class="tick" aria-hidden="true"></span>Wind up and swing a forehand</li>
       </ol>
-      <div class="meter" aria-hidden="true"><div class="meter-track"><div id="cal-dot" class="meter-dot"></div></div><span>Left</span><span>Right</span></div>
-      <p id="cal-msg" class="cal-msg">Waiting for your phone…</p>
+      <div class="meter" aria-hidden="true"><span>Left</span><div class="meter-track"><div id="cal-dot" class="meter-dot"></div></div><span>Right</span></div>
+      <p id="cal-msg" class="cal-msg" aria-live="polite">Waiting for your phone…</p>
       <div class="row">
         <button class="btn" data-nav data-act="cal-done">Done</button>
         <button class="btn ghost" data-nav data-act="cal-skip">Skip setup</button>
@@ -118,12 +158,12 @@
   <!-- HUD -->
   <section id="hud" class="hud" hidden>
     <div class="bug" id="bug">
-      <div class="bug-head"><span class="bug-brand">Air Tennis</span><span class="bug-mode" id="bug-mode"></span><span class="bug-time" id="timer">0:00</span></div>
+      <div class="bug-head"><span class="bug-mode" id="bug-mode"></span><span class="bug-time" id="timer">0:00</span></div>
       <div class="bug-body" id="board"></div>
       <div class="bug-status" id="bug-status"></div>
     </div>
     <span id="score-label" hidden></span>
-    <div class="sboxes">
+    <div class="sboxes" id="readout">
       <div class="sbox"><span class="sbox-k">Rally</span><span class="sbox-v" id="hud-rally">0</span></div>
       <div class="sbox"><span class="sbox-k">Ball speed</span><span class="sbox-v"><span id="hud-speed">–</span><small>km/h</small></span></div>
     </div>
@@ -140,7 +180,8 @@
   <!-- PAUSE -->
   <section id="pause" class="screen overlay" aria-label="Paused" hidden>
     <div class="panel small">
-      <h2 id="pause-title">Paused</h2>
+      <p class="eyebrow" id="pause-eyebrow">Game paused</p>
+      <h2 id="pause-title" class="h1">Paused</h2>
       <p id="pause-msg" class="sub"></p>
       <div class="col">
         <button class="btn" data-nav data-act="resume">Resume</button>
@@ -152,17 +193,17 @@
 
   <!-- RESULTS -->
   <section id="results" class="screen overlay" aria-label="Results" hidden>
-    <div class="panel small">
+    <div class="panel results-panel">
       <p class="eyebrow" id="res-eyebrow">Match over</p>
-      <h2 id="res-title">You win!</h2>
+      <h2 id="res-title" class="display">You win!</h2>
       <dl class="res-stats" id="res-stats"></dl>
-      <div class="col">
+      <div class="row">
         <button class="btn" data-nav data-act="restart">Play again</button>
         <button class="btn ghost" data-nav data-act="menu">Main menu</button>
       </div>
     </div>
   </section>
 
-  <div id="loading" class="loading">Loading court…</div>
+  <div id="loading" class="loading"><span class="spinner" aria-hidden="true"></span>Loading court</div>
 </body>
 </html>

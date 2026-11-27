@@ -1,15 +1,23 @@
-// Air Tennis 3D scene: a floodlit outdoor stadium. Blue hard court with a green surround, white lines,
-// a real net with posts and centre strap, sponsor-free boards, stepped stands with an instanced
-// low-poly crowd, four floodlight towers, umpire's chair, jointed player models with swing animations,
-// and a broadcast camera high behind the near baseline. Quality "low" = Basic graphics.
+// Air Tennis 3D scene: a daytime broadcast hard court. Blue acrylic court with grain,
+// line paint and baseline wear, a real net with posts and centre strap, sponsor-free boards,
+// stepped stands with an instanced crowd, floodlight towers (unlit in daylight), umpire's chair,
+// jointed player models with swing animations, and a broadcast camera high behind the near baseline.
+// Quality "low" = Basic graphics (no shadow maps, no post, cheap blob shadows).
 import * as THREE from "three";
 import { COURT, BALL_R } from "./sim.js";
+import {
+  makeCourtMaps, makeSurroundMaps,
+  netTexture, stringsTexture, boardTexture, screenTexture, glowTexture, blobShadowTexture,
+  mulberry
+} from "./render/textures.js";
+import { MATERIAL_NAMES as MN, nameMat, applyLook, applyShadows, tagSlot } from "./render/look.js";
+import { setupEnvironment, FOG_COLOR } from "./render/env.js";
 
 const LIME = 0xd9ef4a;
 const WHITE = 0xffffff;
 const COL = {
-  inner: 0x2d5f9e, outer: 0x3a6c58, line: 0xf4f6f8, board: 0x0e1d3d, stand: 0x2a3140, standEdge: 0x3a4356,
-  pole: 0x8d96a8, sky1: "#050a18", sky2: "#14264a", sky3: "#2b3f66"
+  inner: 0x2a5aae, outer: 0x4e8a68, line: 0xf4f2ec, board: 0x0e1d3d, stand: 0x4a5362, standEdge: 0x5c6778,
+  pole: 0x8d96a8
 };
 // Kit colours per player id: near team (0, 2) and far team (1, 3).
 const KITS = [
@@ -25,54 +33,105 @@ export function createScene(canvas, quality = "high") {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, high ? 2 : 1));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
+  renderer.toneMappingExposure = high ? 1.0 : 1.05;
   renderer.shadowMap.enabled = high;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // PCF (not soft) at 1024, tightly fitted: much cheaper than the old 2048 PCFSoft.
+  renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const scene = new THREE.Scene();
-  scene.background = skyTexture();
-  scene.fog = new THREE.Fog(0x0b1630, 70, 170);
   const camera = new THREE.PerspectiveCamera(36, 16 / 9, 0.1, 400);
   camera.position.set(0, 10.5, 28.5);
 
-  // ----- lights: floodlit night match -----
-  scene.add(new THREE.HemisphereLight(0xc4d6ff, 0x24321f, high ? 0.75 : 1.0));
-  const key = new THREE.DirectionalLight(0xfff6e8, high ? 2.1 : 1.6);
-  key.position.set(-8, 26, 12);
+  // Lambert on Basic, and on High for large cheap surfaces (stands, crowd, ground, surround).
+  function lambertParams(params) {
+    const p = { color: params.color ?? 0xffffff };
+    if (params.map) p.map = params.map;
+    if (params.transparent) p.transparent = true;
+    if (params.alphaTest != null) p.alphaTest = params.alphaTest;
+    if (params.side) p.side = params.side;
+    if (params.emissive != null) p.emissive = params.emissive;
+    if (params.emissiveIntensity != null) p.emissiveIntensity = params.emissiveIntensity;
+    return p;
+  }
+  function cheapMat(params, name) {
+    return nameMat(new THREE.MeshLambertMaterial(lambertParams(params)), name);
+  }
+  function surfMat(params, name, cheap = false) {
+    if (!high || cheap) return cheapMat(params, name);
+    return nameMat(new THREE.MeshStandardMaterial({ metalness: 0, ...params }), name);
+  }
+
+  // ----- lights: warm high sun, cool sky fill -----
+  // Basic has no shadows or IBL, so the hemi has to carry the daylight.
+  const hemi = new THREE.HemisphereLight(0xc5daf0, 0x7a8a5c, high ? 0.62 : 1.2);
+  scene.add(hemi);
+  const key = new THREE.DirectionalLight(0xfff3dd, high ? 2.15 : 1.65);
+  key.position.set(18, 36, 16);
+  key.target.position.set(0, 0, 0);
+  scene.add(key.target);
   key.castShadow = high;
-  key.shadow.mapSize.set(2048, 2048);
-  Object.assign(key.shadow.camera, { left: -14, right: 14, top: 20, bottom: -20, near: 2, far: 70 });
-  key.shadow.bias = -0.0004;
+  if (high) {
+    key.shadow.mapSize.set(1024, 1024);
+    Object.assign(key.shadow.camera, { left: -16, right: 16, top: 18, bottom: -18, near: 16, far: 72 });
+    key.shadow.bias = -0.0003;
+    key.shadow.normalBias = 0.04;
+    key.shadow.camera.updateProjectionMatrix();
+  }
   scene.add(key);
-  const fill = new THREE.DirectionalLight(0xdfe8ff, 0.55);
-  fill.position.set(10, 18, -14);
+  const fill = new THREE.DirectionalLight(0xd5e3f4, high ? 0.32 : 0.55);
+  fill.position.set(-16, 18, -10);
   scene.add(fill);
 
-  // ----- ground -----
-  const SX = 10.5, SZ = 19.5; // inside the boards
-  const grain = high ? grainTexture() : null;
-  const flat = (w, d, color, y, rough = 0.85) => {
-    const mat = new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0 });
-    if (grain) { mat.roughnessMap = grain; mat.bumpMap = grain; mat.bumpScale = 0.15; }
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
-    m.rotation.x = -Math.PI / 2;
-    m.position.y = y;
-    m.receiveShadow = true;
-    scene.add(m);
-    return m;
-  };
-  flat(140, 160, 0x1b2a22, -0.02, 1); // ground beyond the stadium
-  flat(SX * 2, SZ * 2, COL.outer, 0.0);
-  flat(COURT.halfWD * 2, COURT.halfL * 2, COL.inner, 0.004, 0.8);
+  setupEnvironment(renderer, scene, { high }).catch((e) => {
+    console.warn("Environment setup failed, using the gradient sky.", e?.message || e);
+    scene.fog = new THREE.Fog(FOG_COLOR, 70, 210);
+  });
 
-  // Lines (5 cm, baselines 10 cm).
-  const lineMat = new THREE.MeshStandardMaterial({ color: COL.line, roughness: 0.7 });
-  function line(x1, z1, x2, z2, w = 0.05) { // axis-aligned court lines
+  // ----- ground, surround, hard court -----
+  const SX = 10.5, SZ = 19.5;
+  const courtMaps = high ? makeCourtMaps(true) : null;
+  const surroundMaps = high ? makeSurroundMaps(true) : null;
+
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(140, 160),
+    surfMat({ color: 0x628056 }, "ground", true)
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.02;
+  tagSlot(ground, "ground");
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const outer = new THREE.Mesh(
+    new THREE.PlaneGeometry(SX * 2, SZ * 2),
+    high
+      ? surfMat({ color: 0xffffff, map: surroundMaps.albedo }, "surround", true)
+      : surfMat({ color: 0x5a9e70 }, "surround", true)
+  );
+  outer.rotation.x = -Math.PI / 2;
+  tagSlot(outer, "surround");
+  outer.receiveShadow = true;
+  scene.add(outer);
+
+  const courtMat = high
+    ? surfMat({ color: 0xffffff, map: courtMaps.albedo, roughness: 0.86, envMapIntensity: 0 }, "court")
+    : surfMat({ color: 0x2a66d0 }, "court", true);
+  const inner = new THREE.Mesh(new THREE.PlaneGeometry(COURT.halfWD * 2, COURT.halfL * 2), courtMat);
+  inner.rotation.x = -Math.PI / 2;
+  inner.position.y = 0.004;
+  tagSlot(inner, "court");
+  inner.receiveShadow = true;
+  scene.add(inner);
+
+  // Lines (5 cm, baselines 10 cm). Matte, slightly raised paint.
+  const lineMat = surfMat({ color: COL.line, roughness: 0.92, envMapIntensity: 0.06 }, "line");
+  function line(x1, z1, x2, z2, w = 0.05) {
     const vertical = Math.abs(x2 - x1) < 1e-6;
     const len = vertical ? Math.abs(z2 - z1) : Math.abs(x2 - x1);
     const m = new THREE.Mesh(new THREE.PlaneGeometry(vertical ? w : len + w, vertical ? len + w : w), lineMat);
     m.rotation.x = -Math.PI / 2;
     m.position.set((x1 + x2) / 2, 0.008, (z1 + z2) / 2);
+    tagSlot(m, "line");
     m.receiveShadow = true;
     scene.add(m);
   }
@@ -84,6 +143,8 @@ export function createScene(canvas, quality = "high") {
 
   // ----- net: sagging mesh, white headband, posts, centre strap -----
   const postX = D + 0.914;
+  const netGroup = new THREE.Group();
+  netGroup.name = "net";
   const netGeo = new THREE.PlaneGeometry(postX * 2, 1.07, 40, 1);
   const pos = netGeo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -91,33 +152,41 @@ export function createScene(canvas, quality = "high") {
     if (y > 0) { const k = x / postX; pos.setY(i, 1.07 / 2 - (1.07 - COURT.netH) * (1 - k * k)); }
   }
   netGeo.translate(0, 1.07 / 2, 0);
-  const netMat = new THREE.MeshStandardMaterial({ map: netTexture(), transparent: true, alphaTest: 0.25, side: THREE.DoubleSide, color: 0x111318, roughness: 0.9 });
+  const netMat = surfMat({
+    map: netTexture(), transparent: true, alphaTest: 0.25, side: THREE.DoubleSide,
+    color: 0x111318, roughness: 0.9, envMapIntensity: 0.08
+  }, MN.Net_Mesh);
   const net = new THREE.Mesh(netGeo, netMat);
-  net.castShadow = high;
-  scene.add(net);
-  const tapeMat = new THREE.MeshStandardMaterial({ color: WHITE, roughness: 0.6 });
+  tagSlot(net, MN.Net_Mesh);
+  netGroup.add(net);
+  const tapeMat = surfMat({ color: WHITE, roughness: 0.78, envMapIntensity: 0.12 }, MN.Net_Tape);
   for (let i = 0; i < 40; i++) {
     const x0 = -postX + (i / 40) * postX * 2, x1 = -postX + ((i + 1) / 40) * postX * 2;
     const y = (x) => 1.07 - (1.07 - COURT.netH) * (1 - (x / postX) ** 2);
     const seg = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0 + 0.01, 0.06, 0.03), tapeMat);
     seg.position.set((x0 + x1) / 2, (y(x0) + y(x1)) / 2 - 0.03, 0);
     seg.rotation.z = Math.atan2(y(x1) - y(x0), x1 - x0);
-    scene.add(seg);
+    tagSlot(seg, MN.Net_Tape);
+    seg.castShadow = high;
+    netGroup.add(seg);
   }
   const strap = new THREE.Mesh(new THREE.BoxGeometry(0.05, COURT.netH, 0.02), tapeMat);
   strap.position.set(0, COURT.netH / 2, 0);
-  scene.add(strap);
-  const postMat = new THREE.MeshStandardMaterial({ color: 0x1d4a37, roughness: 0.5, metalness: 0.3 });
+  tagSlot(strap, MN.Net_Tape);
+  strap.castShadow = high;
+  netGroup.add(strap);
+  const postMat = surfMat({ color: 0x1d4a37, roughness: 0.38, metalness: 0.45, envMapIntensity: 0.7 }, MN.Post_Metal);
   for (const x of [-postX, postX]) {
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.045, 1.1, 14), postMat);
     post.position.set(x, 0.55, 0);
+    tagSlot(post, MN.Post_Metal);
     post.castShadow = high;
-    scene.add(post);
+    netGroup.add(post);
   }
+  scene.add(netGroup);
 
-  // ----- boards, stands, crowd, lights, chair, screen -----
+  // ----- boards, stands, crowd, towers, chair, screen -----
   const boardTex = boardTexture();
-  const boardMat = new THREE.MeshStandardMaterial({ map: boardTex, roughness: 0.6 });
   const boards = [
     { w: SX * 2, x: 0, z: -SZ, ry: 0 }, { w: SX * 2, x: 0, z: SZ, ry: Math.PI },
     { w: SZ * 2, x: -SX, z: 0, ry: Math.PI / 2 }, { w: SZ * 2, x: SX, z: 0, ry: -Math.PI / 2 }
@@ -126,19 +195,20 @@ export function createScene(canvas, quality = "high") {
     const tex = boardTex.clone();
     tex.needsUpdate = true;
     tex.repeat.set(b.w / 10, 1);
-    const m = new THREE.Mesh(new THREE.BoxGeometry(b.w, 1.0, 0.15), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 }));
+    const m = new THREE.Mesh(new THREE.BoxGeometry(b.w, 1.0, 0.15), surfMat({ map: tex, roughness: 0.62, envMapIntensity: 0.15 }, "board", true));
     m.position.set(b.x, 0.5, b.z);
     m.rotation.y = b.ry;
+    tagSlot(m, "board");
     m.receiveShadow = true;
     scene.add(m);
   }
-  boardMat.dispose();
 
   const ROWS = 16, RISE = 0.48, DEPTH = 0.85, SEAT = 0.62;
-  const standMat = new THREE.MeshStandardMaterial({ color: COL.stand, roughness: 0.95 });
-  const edgeMat = new THREE.MeshStandardMaterial({ color: COL.standEdge, roughness: 0.9 });
-  const seats = []; // {x, y, z, ry}
-  // Each stand: along a side, rising away from the court.
+  const standMat = surfMat({ color: COL.stand }, MN.Stand_Concrete, true);
+  const edgeMat = surfMat({ color: COL.standEdge }, MN.Stand_Seat, true);
+  const seats = [];
+  const standsGroup = new THREE.Group();
+  standsGroup.name = "stands";
   const stands = [
     { len: SZ * 2 - 2, cx: -(SX + 1.2), cz: 0, out: [-1, 0], ry: Math.PI / 2 },
     { len: SZ * 2 - 2, cx: SX + 1.2, cz: 0, out: [1, 0], ry: -Math.PI / 2 },
@@ -147,29 +217,36 @@ export function createScene(canvas, quality = "high") {
   ];
   for (const st of stands) {
     for (let r = 0; r < ROWS; r++) {
-      const d = r * DEPTH, h = 1.0 + r * RISE;
+      const d = r * DEPTH, hgt = 1.0 + r * RISE;
       const along = st.out[0] === 0 ? [1, 0] : [0, 1];
-      const geo = new THREE.BoxGeometry(st.out[0] === 0 ? st.len : DEPTH, h, st.out[0] === 0 ? DEPTH : st.len);
-      const step = new THREE.Mesh(geo, r % 4 === 3 ? edgeMat : standMat);
-      step.position.set(st.cx + st.out[0] * d, h / 2, st.cz + st.out[1] * d);
-      step.receiveShadow = high;
-      scene.add(step);
+      const geo = new THREE.BoxGeometry(st.out[0] === 0 ? st.len : DEPTH, hgt, st.out[0] === 0 ? DEPTH : st.len);
+      const isSeat = r % 4 === 3;
+      const step = new THREE.Mesh(geo, isSeat ? edgeMat : standMat);
+      step.position.set(st.cx + st.out[0] * d, hgt / 2, st.cz + st.out[1] * d);
+      tagSlot(step, isSeat ? MN.Stand_Seat : MN.Stand_Concrete);
+      step.receiveShadow = true;
+      standsGroup.add(step);
       const n = Math.floor(st.len / SEAT);
       for (let i = 0; i < n; i++) {
         const a = -st.len / 2 + (i + 0.5) * SEAT;
-        seats.push({ x: st.cx + st.out[0] * d + along[0] * a, y: h, z: st.cz + st.out[1] * d + along[1] * a, ry: st.ry });
+        seats.push({ x: st.cx + st.out[0] * d + along[0] * a, y: hgt, z: st.cz + st.out[1] * d + along[1] * a, ry: st.ry });
       }
     }
   }
-  // Crowd: two instanced meshes (bodies + heads). High: ~85% full. Basic: ~30% and no animation shadows.
+  scene.add(standsGroup);
+
   const rnd = mulberry(7);
   const fillRate = high ? 0.86 : 0.3;
   const crowdSeats = seats.filter(() => rnd() < fillRate);
   const bodyGeo = new THREE.CylinderGeometry(0.17, 0.22, 0.58, high ? 7 : 5);
   bodyGeo.translate(0, 0.29, 0);
   const headGeo = new THREE.IcosahedronGeometry(0.13, high ? 1 : 0);
-  const bodyMesh = new THREE.InstancedMesh(bodyGeo, new THREE.MeshStandardMaterial({ roughness: 0.9 }), crowdSeats.length);
-  const headMesh = new THREE.InstancedMesh(headGeo, new THREE.MeshStandardMaterial({ roughness: 0.8 }), crowdSeats.length);
+  const bodyMesh = new THREE.InstancedMesh(bodyGeo, surfMat({ roughness: 0.88 }, MN.Crowd, true), crowdSeats.length);
+  const headMesh = new THREE.InstancedMesh(headGeo, surfMat({ roughness: 0.8 }, MN.Crowd, true), crowdSeats.length);
+  tagSlot(bodyMesh, MN.Crowd);
+  tagSlot(headMesh, MN.Crowd);
+  bodyMesh.receiveShadow = true;
+  headMesh.receiveShadow = true;
   const shirtCols = [0xc9ced6, 0x26365a, 0x7e2b2b, 0x3a5a82, 0xa8955a, 0x3b5f48, 0x564763, 0x2c3038, 0x8a6240, 0x737a86, 0x2f5e5a, 0xdedfe2, 0x1d2230];
   const skinCols = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac, 0xa5694f];
   const dummy = new THREE.Object3D();
@@ -190,10 +267,20 @@ export function createScene(canvas, quality = "high") {
   });
   bodyMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   headMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  scene.add(bodyMesh, headMesh);
+  const crowdGroup = new THREE.Group();
+  crowdGroup.name = "crowd";
+  crowdGroup.add(bodyMesh, headMesh);
+  scene.add(crowdGroup);
   let cheerT = 0, cheerAmp = 0;
+  let liveCrowd = crowdGroup;
+  let crowdCount = crowdSeats.length;
   function animateCrowd(t, dt) {
+    if (liveCrowd && liveCrowd !== crowdGroup && typeof liveCrowd.userData?.update === "function") {
+      liveCrowd.userData.update(t, dt);
+      return;
+    }
     if (cheerT <= 0) return;
+    if (!bodyMesh.parent) return;
     cheerT -= dt;
     const fade = Math.max(0, Math.min(1, cheerT / 0.4));
     for (let i = 0; i < crowdSeats.length; i++) {
@@ -212,10 +299,10 @@ export function createScene(canvas, quality = "high") {
     headMesh.instanceMatrix.needsUpdate = true;
   }
 
-  // Floodlight towers in the four corners.
+  // Floodlight towers (architecture only — they do not light the court in daylight).
   const glow = glowTexture();
-  const lampMat = new THREE.MeshBasicMaterial({ color: 0xfffbea });
-  const poleMat = new THREE.MeshStandardMaterial({ color: COL.pole, metalness: 0.6, roughness: 0.4 });
+  const lampMat = surfMat({ color: 0xc8c2b0, roughness: 0.35, metalness: 0.4, emissive: 0x221e14, emissiveIntensity: 0.15 }, "lamp", true);
+  const poleMat = surfMat({ color: COL.pole, metalness: 0.6, roughness: 0.4, envMapIntensity: 0.5 }, "pole", true);
   for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
     const px = x * (SX + 12), pz = z * (SZ + 12);
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.6, 30, 10), poleMat);
@@ -231,38 +318,40 @@ export function createScene(canvas, quality = "high") {
       lamp.position.set(-1.8 + i * 1.2, -1 + j * 1.0, 0.27);
       head.add(lamp);
     }
-    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: 0xfff1cc, transparent: true, opacity: high ? 0.55 : 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
-    halo.scale.set(16, 12, 1);
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: 0xfff1cc, transparent: true, opacity: 0.08, blending: THREE.AdditiveBlending, depthWrite: false }));
+    halo.scale.set(8, 6, 1);
     halo.position.z = 0.6;
     head.add(halo);
     scene.add(head);
   }
 
-  // Umpire's chair beside the net.
   const chair = new THREE.Group();
-  const chairMat = new THREE.MeshStandardMaterial({ color: 0x1d4a37, roughness: 0.6 });
+  chair.name = "chair";
+  const chairMat = surfMat({ color: 0x1d4a37, roughness: 0.5, metalness: 0.2, envMapIntensity: 0.4 }, MN.Chair_Frame);
   for (const [dx, dz] of [[-0.35, -0.35], [0.35, -0.35], [-0.35, 0.35], [0.35, 0.35]]) {
     const leg = new THREE.Mesh(new THREE.BoxGeometry(0.07, 2.0, 0.07), chairMat);
     leg.position.set(dx, 1.0, dz);
+    tagSlot(leg, MN.Chair_Frame);
     chair.add(leg);
   }
   const seatBox = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.12, 0.85), chairMat);
   seatBox.position.y = 2.0;
+  tagSlot(seatBox, MN.Chair_Frame);
   chair.add(seatBox);
   const back = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.8, 0.85), chairMat);
   back.position.set(-0.4, 2.45, 0);
+  tagSlot(back, MN.Chair_Frame);
   chair.add(back);
-  const ump = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.45, 4, 10), new THREE.MeshStandardMaterial({ color: 0x23324f }));
+  const ump = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.45, 4, 10), surfMat({ color: 0x23324f, roughness: 0.8 }, MN.Player_Kit, true));
   ump.position.set(-0.05, 2.5, 0);
   chair.add(ump);
-  const umpHead = new THREE.Mesh(new THREE.SphereGeometry(0.12, 14, 10), new THREE.MeshStandardMaterial({ color: 0xd9a77e }));
+  const umpHead = new THREE.Mesh(new THREE.SphereGeometry(0.12, 14, 10), surfMat({ color: 0xd9a77e, roughness: 0.55 }, MN.Player_Skin, true));
   umpHead.position.set(-0.05, 3.0, 0);
   chair.add(umpHead);
   chair.position.set(-(postX + 0.9), 0, 0);
-  chair.traverse((o) => { o.castShadow = high; });
+  chair.traverse((o) => { if (o.isMesh) { o.castShadow = high; o.userData.slot = o.userData.slot || MN.Chair_Frame; } });
   scene.add(chair);
 
-  // Big screen above the far stand (our own wordmark only).
   const screenMesh = new THREE.Mesh(new THREE.PlaneGeometry(12, 3.4), new THREE.MeshBasicMaterial({ map: screenTexture() }));
   screenMesh.position.set(0, 1.0 + ROWS * RISE + 3.6, -(SZ + 1.2 + ROWS * DEPTH - 0.4));
   scene.add(screenMesh);
@@ -270,8 +359,14 @@ export function createScene(canvas, quality = "high") {
   // ----- players -----
   function humanoid(kit) {
     const g = new THREE.Group();
-    const M = (color, rough = 0.7) => new THREE.MeshStandardMaterial({ color, roughness: rough });
-    const skin = M(kit.skin, 0.6), shirt = M(kit.shirt, 0.8), shorts = M(kit.shorts, 0.8), shoe = M(0xf5f5f5, 0.5), sock = M(0xffffff, 0.9), hair = M(kit.hair, 0.9), band = M(kit.band, 0.7);
+    const M = (color, rough, name) => surfMat({ color, roughness: rough }, name);
+    const skin = M(kit.skin, 0.52, MN.Player_Skin);
+    const shirt = M(kit.shirt, 0.8, MN.Player_Kit);
+    const shorts = M(kit.shorts, 0.8, MN.Player_Kit);
+    const shoe = M(0xf5f5f5, 0.42, MN.Player_Shoe);
+    const sock = M(0xffffff, 0.9, MN.Player_Kit);
+    const hair = M(kit.hair, 0.9, MN.Player_Skin);
+    const band = M(kit.band, 0.7, MN.Player_Kit);
     const cap = (r, h, mat) => { const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, h, 4, high ? 12 : 8), mat); m.castShadow = high; return m; };
     const hips = new THREE.Group(); hips.position.y = 0.95; g.add(hips);
     const pelvis = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.16, 0.24, 14), shorts); pelvis.castShadow = high; hips.add(pelvis);
@@ -300,32 +395,55 @@ export function createScene(canvas, quality = "high") {
       const knee = new THREE.Group(); knee.position.y = -0.43; hip.add(knee);
       const shin = cap(0.055, 0.26, skin); shin.position.y = -0.17; knee.add(shin);
       const sk = cap(0.058, 0.08, sock); sk.position.y = -0.33; knee.add(sk);
-      const foot = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.08, 0.27), shoe); foot.position.set(0, -0.44, -0.05); foot.castShadow = high; knee.add(foot);
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.08, 0.27), shoe); foot.position.set(0, -0.44, -0.05); foot.castShadow = high; tagSlot(foot, MN.Player_Shoe); knee.add(foot);
       legs.push({ hip, knee });
     }
-    // Racket in the right hand: handle, throat, oval head, strings.
     const racket = new THREE.Group();
-    const frameMat = M(0x1a1d24, 0.4);
-    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.018, 0.2, 8), M(0x222222, 0.9)); handle.position.y = -0.06; racket.add(handle);
+    const frameMat = M(0x1a1d24, 0.35, MN.Racket_Frame);
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.018, 0.2, 8), M(0x222222, 0.9, MN.Racket_Frame)); handle.position.y = -0.06; racket.add(handle);
     const throat = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.16, 6), frameMat); throat.position.y = -0.22; racket.add(throat);
     const rim = new THREE.Mesh(new THREE.TorusGeometry(0.125, 0.012, 8, high ? 32 : 18), frameMat); rim.scale.set(0.8, 1.15, 1); rim.position.y = -0.43; racket.add(rim);
-    const strings = new THREE.Mesh(new THREE.CircleGeometry(0.118, 24), new THREE.MeshStandardMaterial({ map: stringsTexture(), transparent: true, alphaTest: 0.2, side: THREE.DoubleSide, color: 0xeeeeee })); strings.scale.set(0.8, 1.15, 1); strings.position.y = -0.43; racket.add(strings);
-    racket.traverse((o) => { o.castShadow = high; });
+    const strings = new THREE.Mesh(new THREE.CircleGeometry(0.118, 24), surfMat({ map: stringsTexture(), transparent: true, alphaTest: 0.2, side: THREE.DoubleSide, color: 0xeeeeee, roughness: 0.55 }, MN.Racket_Strings));
+    strings.scale.set(0.8, 1.15, 1); strings.position.y = -0.43; racket.add(strings);
+    racket.traverse((o) => { if (o.isMesh) { o.castShadow = high; o.userData.slot = o.material?.name || MN.Racket_Frame; } });
     arms[1].hand.add(racket);
     g.userData = { hips, chest, arms, legs, racket };
+    g.traverse((o) => {
+      if (!o.isMesh) return;
+      if (!o.userData.slot) o.userData.slot = o.material?.name || MN.Player_Skin;
+      o.castShadow = high;
+    });
     scene.add(g);
     return g;
   }
   const players = KITS.map((k) => humanoid(k));
   for (const i of [1, 3]) players[i].rotation.y = Math.PI;
 
-  // ----- ball, shadow, trail -----
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_R * 0.85, 18, 14), new THREE.MeshStandardMaterial({ color: 0xd8ec3c, roughness: 0.55, emissive: 0x4a5400, emissiveIntensity: 0.6 }));
+  // ----- ball, shadows, trail -----
+  const ball = new THREE.Mesh(
+    new THREE.SphereGeometry(BALL_R * 0.85, 18, 14),
+    surfMat({ color: 0xd8ec3c, roughness: 0.5, envMapIntensity: 0.25, emissive: 0x2a3200, emissiveIntensity: 0.12 }, "ball")
+  );
   ball.castShadow = high;
   scene.add(ball);
-  const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.11, 18), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.38, depthWrite: false }));
+  const blobMap = blobShadowTexture();
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.55, 0.55),
+    new THREE.MeshBasicMaterial({ map: blobMap, transparent: true, opacity: 0.45, depthWrite: false })
+  );
   shadow.rotation.x = -Math.PI / 2;
   scene.add(shadow);
+  const playerBlobs = players.map(() => {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.15, 1.35),
+      new THREE.MeshBasicMaterial({ map: blobMap, transparent: true, opacity: 0.32, depthWrite: false })
+    );
+    m.rotation.x = -Math.PI / 2;
+    m.position.y = 0.016;
+    m.visible = !high;
+    scene.add(m);
+    return m;
+  });
   const TRAIL = high ? 10 : 0;
   const trailPos = new Float32Array(Math.max(1, TRAIL) * 3);
   const trailGeo = new THREE.BufferGeometry();
@@ -356,7 +474,6 @@ export function createScene(canvas, quality = "high") {
     bursts.push({ ring, age: 0, life: 0.9, max: 0, mark: true });
   }
 
-  // Target rings for Target Practice.
   const targetMeshes = new Map();
   function syncTargets(list, t) {
     const seen = new Set();
@@ -384,13 +501,13 @@ export function createScene(canvas, quality = "high") {
 
   // Ball machine for Ball Machine / Training / Target Practice.
   const robot = new THREE.Group();
-  const rbMat = new THREE.MeshStandardMaterial({ color: 0x2b2f38, metalness: 0.4, roughness: 0.45 });
+  const rbMat = surfMat({ color: 0x2b2f38, metalness: 0.4, roughness: 0.45 }, "robot", true);
   const rbBody = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.7, 0.8), rbMat); rbBody.position.y = 0.45; robot.add(rbBody);
-  const rbHopper = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.3, 0.4, 18, 1, true), new THREE.MeshStandardMaterial({ color: 0x3b4252, side: THREE.DoubleSide })); rbHopper.position.y = 1.0; robot.add(rbHopper);
+  const rbHopper = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.3, 0.4, 18, 1, true), surfMat({ color: 0x3b4252, side: THREE.DoubleSide }, "robot", true)); rbHopper.position.y = 1.0; robot.add(rbHopper);
   const rbBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.45, 12), rbMat); rbBarrel.rotation.x = Math.PI / 2.6; rbBarrel.position.set(0, 0.85, 0.3); robot.add(rbBarrel);
   const rbEye = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.08), new THREE.MeshBasicMaterial({ color: 0x9fd3ff })); rbEye.position.set(0, 0.6, 0.41); robot.add(rbEye);
   for (let i = 0; i < 9; i++) {
-    const b = new THREE.Mesh(new THREE.SphereGeometry(0.065, 10, 8), new THREE.MeshStandardMaterial({ color: 0xd8ec3c, roughness: 0.6 }));
+    const b = new THREE.Mesh(new THREE.SphereGeometry(0.065, 10, 8), surfMat({ color: 0xd8ec3c, roughness: 0.6 }, "ball", true));
     b.position.set(Math.cos(i * 1.3) * 0.22, 1.12 + (i % 3) * 0.05, Math.sin(i * 1.3) * 0.22);
     robot.add(b);
   }
@@ -398,35 +515,17 @@ export function createScene(canvas, quality = "high") {
   robot.position.set(0, 0, -12.4);
   scene.add(robot);
 
+  let composer = null;
+  let postApi = null;
   function resize() {
     const w = window.innerWidth, h = window.innerHeight;
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    postApi?.setSize(w, h);
     composer?.setSize(w, h);
   }
-
-  // Mild bloom on High so the floodlights glow (loaded lazily so Basic never downloads it).
-  let composer = null;
-  async function enableBloom() {
-    try {
-      const [{ EffectComposer }, { RenderPass }, { UnrealBloomPass }, { OutputPass }] = await Promise.all([
-        import("three/addons/postprocessing/EffectComposer.js"),
-        import("three/addons/postprocessing/RenderPass.js"),
-        import("three/addons/postprocessing/UnrealBloomPass.js"),
-        import("three/addons/postprocessing/OutputPass.js")
-      ]);
-      const cmp = new EffectComposer(renderer);
-      cmp.addPass(new RenderPass(scene, camera));
-      cmp.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.32, 0.5, 0.9));
-      cmp.addPass(new OutputPass());
-      composer = cmp;
-      resize();
-    } catch (e) {
-      console.warn("Bloom unavailable, continuing without it.", e?.message || e);
-    }
-  }
-  if (high) enableBloom();
+  // No post on High: daylight bloom added little and the composer was a large share of the extra cost.
   resize();
   window.addEventListener("resize", resize);
 
@@ -434,8 +533,7 @@ export function createScene(canvas, quality = "high") {
   const camLook = new THREE.Vector3(0, 0, 0.8);
   const tmp = new THREE.Vector3();
 
-  // ----- animation -----
-  // Ready stance, run cycle and swings: forehand, two-handed backhand, overhead/serve (0.5 s).
+
   function poseCharacter(g, p, swingAge, kind, moving, t, serveToss) {
     const d = g.userData;
     g.position.set(p.x, 0, p.z);
@@ -487,6 +585,20 @@ export function createScene(canvas, quality = "high") {
     d.racket.rotation.set(rk, 0, 0);
   }
 
+
+  let formaPose = null;
+  function posePlayer(g, p, swingAge, kind, moving, t, serveToss) {
+    if (formaPose) {
+      formaPose(g, p, swingAge, kind, moving, t, serveToss);
+      return;
+    }
+    if (g.userData?.hips && g.userData?.arms && g.userData?.legs && g.userData?.racket) {
+      poseCharacter(g, p, swingAge, kind, moving, t, serveToss);
+    } else {
+      g.position.set(p.x, 0, p.z);
+    }
+  }
+
   const prevX = [0, 0, 0, 0];
   function update(state, dt) {
     const { sim, t, menu } = state;
@@ -498,7 +610,12 @@ export function createScene(canvas, quality = "high") {
       const moving = Math.abs(p.x - prevX[i]) / Math.max(dt, 1e-3) / 4;
       prevX[i] = p.x;
       const serving = sim.phase === "serve" && sim.serverId === p.id;
-      poseCharacter(g, p, sim.time - p.swingAt, p.swingKind || (p.swingDir < -0.2 ? "bh" : "fh"), moving, t, serving);
+      posePlayer(g, p, sim.time - p.swingAt, p.swingKind || (p.swingDir < -0.2 ? "bh" : "fh"), moving, t, serving);
+      const blob = playerBlobs[i];
+      if (blob) {
+        blob.visible = !high && g.visible;
+        blob.position.set(p.x, 0.016, p.z);
+      }
     });
     const showBall = menu || sim.phase !== "idle";
     const visibleBall = MODES_WITH_SERVE.has(sim.mode) ? true : b.live || sim.phase === "feed";
@@ -550,107 +667,70 @@ export function createScene(canvas, quality = "high") {
   }
 
   function cheer(big = false) {
+    if (liveCrowd && typeof liveCrowd.userData?.cheer === "function") {
+      liveCrowd.userData.cheer(big);
+      return;
+    }
     cheerT = big ? 1.6 : 1.0;
     cheerAmp = big ? 1 : 0.55;
   }
 
+  // Swap Forma's models.js in when it is present. Placeholders stay if the module is
+  // missing or throws. Visuals only — hitboxes and physics are untouched.
+  function adopt(obj, shadowOpts) {
+    if (!obj) return;
+    applyLook(obj);
+    applyShadows(obj, shadowOpts);
+    scene.add(obj);
+  }
+  function swapModels(models) {
+    if (!models || typeof models !== "object") return;
+    if (Array.isArray(models.players) && models.players.length) {
+      const n = Math.min(models.players.length, players.length);
+      for (let i = 0; i < n; i++) {
+        const next = models.players[i];
+        if (!next) continue;
+        scene.remove(players[i]);
+        players[i] = next;
+        if (i === 1 || i === 3) next.rotation.y = Math.PI;
+        adopt(next, { cast: high, receive: false });
+      }
+    }
+    if (models.net) {
+      scene.remove(netGroup);
+      models.net.name = models.net.name || "net";
+      adopt(models.net, { cast: high, receive: false });
+    }
+    if (models.chair) {
+      scene.remove(chair);
+      models.chair.position.set(-(postX + 0.9), 0, 0);
+      adopt(models.chair, { cast: high, receive: false });
+    }
+    if (models.stands) {
+      scene.remove(standsGroup);
+      adopt(models.stands, { cast: false, receive: true });
+    }
+    if (models.crowd) {
+      scene.remove(crowdGroup);
+      adopt(models.crowd, { cast: false, receive: true });
+      liveCrowd = models.crowd;
+      if (models.crowd.userData?.count != null) crowdCount = models.crowd.userData.count;
+    }
+  }
+  import("./models.js")
+    .then((mod) => {
+      if (typeof mod.posePlayer === "function") formaPose = mod.posePlayer;
+      if (typeof mod.buildModels !== "function") return;
+      return Promise.resolve(mod.buildModels({ quality: high ? "high" : "low" })).then(swapModels);
+    })
+    .catch(() => { /* models.js absent or threw — keep placeholders */ });
+
   return {
     update, burst: (x, y, z, col, big) => burst(new THREE.Vector3(x, y, z), col, big), bounceMark, project, cheer,
-    renderer, scene, camera, crowdCount: crowdSeats.length, quality: high ? "high" : "low",
+    renderer, scene, camera, get crowdCount() { return crowdCount; }, quality: high ? "high" : "low",
     colors: { LIME, CYAN: 0x9fd3ff, PINK: 0xffffff }
   };
 }
 
 const MODES_WITH_SERVE = new Set(["match", "match2", "rally2", "doubles"]);
 const robotMode = (sim) => sim.mode === "practice" || sim.mode === "target" || sim.mode === "training";
-
-function mulberry(a) {
-  return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-}
-function canvasTex(w, h, draw, srgb = true) {
-  const c = document.createElement("canvas");
-  c.width = w; c.height = h;
-  draw(c.getContext("2d"), w, h);
-  const t = new THREE.CanvasTexture(c);
-  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-function skyTexture() {
-  return canvasTex(4, 256, (g, w, h) => {
-    const grd = g.createLinearGradient(0, 0, 0, h);
-    grd.addColorStop(0, COL.sky1); grd.addColorStop(0.6, COL.sky2); grd.addColorStop(1, COL.sky3);
-    g.fillStyle = grd; g.fillRect(0, 0, w, h);
-  });
-}
-function grainTexture() {
-  const t = canvasTex(256, 256, (g, w, h) => {
-    const img = g.createImageData(w, h);
-    const r = mulberry(3);
-    for (let i = 0; i < img.data.length; i += 4) { const v = 150 + r() * 70; img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255; }
-    g.putImageData(img, 0, 0);
-  }, false);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(20, 30);
-  return t;
-}
-function netTexture() {
-  const t = canvasTex(512, 64, (g, w, h) => {
-    g.clearRect(0, 0, w, h);
-    g.strokeStyle = "rgba(255,255,255,1)";
-    g.lineWidth = 2;
-    for (let x = 0; x <= w; x += 8) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); }
-    for (let y = 0; y <= h; y += 8) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
-  });
-  t.wrapS = THREE.RepeatWrapping;
-  t.repeat.set(5, 1);
-  return t;
-}
-function stringsTexture() {
-  return canvasTex(64, 64, (g, w, h) => {
-    g.clearRect(0, 0, w, h);
-    g.strokeStyle = "rgba(255,255,255,0.9)";
-    g.lineWidth = 1.2;
-    for (let i = 4; i < w; i += 6) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, h); g.stroke(); g.beginPath(); g.moveTo(0, i); g.lineTo(w, i); g.stroke(); }
-  });
-}
-function boardTexture() {
-  const t = canvasTex(1024, 100, (g, w, h) => {
-    g.fillStyle = "#0e1d3d"; g.fillRect(0, 0, w, h);
-    g.fillStyle = "#d9ef4a"; g.fillRect(0, h - 6, w, 6);
-    g.font = "700 54px Urbanist, Segoe UI, sans-serif";
-    g.textBaseline = "middle";
-    g.fillStyle = "#ffffff";
-    g.fillText("AIR TENNIS", 40, h / 2);
-    g.fillStyle = "#9fb0d6";
-    g.font = "600 40px Urbanist, Segoe UI, sans-serif";
-    g.fillText("· MOTION CUP ·", 420, h / 2);
-    g.fillStyle = "#ffffff";
-    g.font = "700 54px Urbanist, Segoe UI, sans-serif";
-    g.fillText("AIR TENNIS", 720, h / 2);
-  });
-  t.wrapS = THREE.RepeatWrapping;
-  return t;
-}
-function screenTexture() {
-  return canvasTex(1024, 290, (g, w, h) => {
-    g.fillStyle = "#08122a"; g.fillRect(0, 0, w, h);
-    g.strokeStyle = "#d9ef4a"; g.lineWidth = 8; g.strokeRect(8, 8, w - 16, h - 16);
-    g.fillStyle = "#ffffff"; g.font = "700 120px Urbanist, Segoe UI, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
-    g.fillText("AIR TENNIS", w / 2, h / 2 - 20);
-    g.fillStyle = "#9fb0d6"; g.font = "600 44px Urbanist, Segoe UI, sans-serif";
-    g.fillText("MOTION CUP · CENTRE COURT", w / 2, h / 2 + 80);
-  });
-}
-let glowTex = null;
-function glowTexture() {
-  if (glowTex) return glowTex;
-  glowTex = canvasTex(64, 64, (g) => {
-    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-    grd.addColorStop(0, "rgba(255,255,255,1)");
-    grd.addColorStop(0.3, "rgba(255,255,255,0.5)");
-    grd.addColorStop(1, "rgba(255,255,255,0)");
-    g.fillStyle = grd;
-    g.fillRect(0, 0, 64, 64);
-  }, false);
-  return glowTex;
-}

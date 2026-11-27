@@ -521,6 +521,27 @@ function sendTo(from, msg) {
   if (from === "local") { window.__airTennis.outbox.push(msg); return; }
   host?.sendTo?.(from, msg);
 }
+// Hit timing for body-camera swings. The phone reports `ago`: ms since the contact moment it saw on camera (it detects
+// the swing a little after the arm passes the ball). Judge the swing as if it arrived then: rewind the ball along
+// its flight by `ago` (clamped to 0..150 ms) while the timing window is checked, put the ball back, and schedule the
+// hit for the real moment. No `ago` (keyboard, old phones, tests) = judged on arrival, as before.
+const MAX_BACKDATE_S = 0.15;
+function backdatedSwing(m, id) {
+  const back = Math.min(MAX_BACKDATE_S, Math.max(0, (Number(m.ago) || 0) / 1000));
+  const b = sim.ball;
+  const swing = () => sim.swing(m.dir, m.spd, "phone", id, { kind: m.k, lift: m.lift });
+  if (!back || !b || !b.live || sim.phase !== "rally" || sim.pending) return swing();
+  const saved = { x: b.x, y: b.y, z: b.z, vy: b.vy };
+  b.x -= b.vx * back;
+  b.z -= b.vz * back;
+  const y = b.y - b.vy * back - 0.5 * 9.8 * back * back; // ballistic rewind; skipped if it would cross a bounce
+  if (y > 0.15 && b.y > 0.15) { b.y = y; b.vy += 9.8 * back; }
+  let r;
+  try { r = swing(); } finally { Object.assign(b, saved); }
+  if (r?.result === "hit" && sim.pending) sim.pending.at = Math.max(sim.time, sim.pending.at - back);
+  return r ? { ...r, backdated: Math.round(back * 1000) } : r;
+}
+
 function onPhoneMessage(raw, from = "local") {
   const m = gateFor(from).accept(raw);
   if (!m) return null;
@@ -560,7 +581,7 @@ function onPhoneMessage(raw, from = "local") {
       if (id === null) break;
       if (screen === "game") {
         if (id === 0) inputMode = "phone";
-        const r = sim.swing(m.dir, m.spd, "phone", id, { kind: m.k, lift: m.lift });
+        const r = backdatedSwing(m, id);
         window.__airTennis.lastSwing = { id, ...r };
       }
       if (screen === "cal") { $("cal-msg").textContent = m.k ? `${{ fh: "Forehand", bh: "Backhand", oh: "Overhead", sv: "Serve" }[m.k]} detected!` : "Swing detected!"; sfx.hit(0.6, true); }

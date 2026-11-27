@@ -1,13 +1,19 @@
-# Testing Air Tennis (v2.1: body camera only)
+# Testing Air Tennis (v3: body camera only)
 
 ## Run
 ```bash
 cd /workspace/air-tennis
-node --test tests/*.test.mjs                 # 43 unit tests: rules, physics, pose detector, 2P tracker, packets, slots
-python3 -m http.server 4180 --bind 127.0.0.1 &   # serve the folder (the clip script needs it too)
+node --test tests/*.test.mjs                 # 56 unit tests: rules, physics, pose detector, tracker, packets, slots, trace replay
+node tests/tracking-metrics.mjs              # tracking report (JSON): 648 synthetic swings at 30/15/10 fps -> recall, stroke
+                                             # accuracy, timing error, false swings/min, phantoms, ID switches
+python3 -m http.server 4180 --bind 127.0.0.1 &   # serve the folder (the scripts below need it). Run browser suites one at a time.
 (cd tests/fixtures && python3 make_body_clip.py)   # fake camera clip of two rendered people + a 5 fps slow-motion copy
-python3 tests/test_air_tennis.py             # 40 headless-Chrome checks: TV, packets, phone join/start/camera prompt
-python3 tests/test_v2.py                     # 43 headless-Chrome checks: modes, pose-packet play, real MediaPipe on the clip
+python3 tests/make_pose_traces.py            # needs the server on :4180: runs real MediaPipe on a y4m clip and writes a
+                                             # landmark trace to tests/fixtures/traces/ (used by trace-replay.test.mjs)
+python3 tests/test_air_tennis.py             # 43 headless-Chrome checks: TV, packets, phone join/start/camera prompt
+python3 tests/test_v2.py                     # 52 headless-Chrome checks: modes, pose-packet play, real MediaPipe on the clip
+python3 tests/shots_v3.py                    # 2P mid-rally screenshots on High and Basic
+python3 tests/ui_screens.py                  # UI screenshot set at 1920x1080/1280x720 and two phone sizes (tests/screens/ui-v3/)
 ```
 
 ## What is covered
@@ -17,6 +23,8 @@ python3 tests/test_v2.py                     # 43 headless-Chrome checks: modes,
 - All modes in the simulator (1P match, Rally Challenge, Ball Machine, Target, flight speeds, 2P Rally, 2P Match,
   Doubles with 4 players and with CPU partners, Training, stamina).
 - Packet gate: clamping, floods, junk, unknown types; only `mode: body` is accepted (motion/hand modes are dropped).
+  Swing packets may carry `ago` (ms since contact, clamped 0-300; the TV backdates by at most 150 ms), `c`
+  (confidence, clamped 0-1) and `n` (per-slot swing counter, integer >= 0). Tests check no images or landmarks are sent.
 - Slot map: 2 camera phones fill Players 1-4, a 3rd is refused.
 
 **v2 unit tests** (`tests/pose.test.mjs`, `tests/sim2.test.mjs`, `tests/input.test.mjs`)

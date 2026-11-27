@@ -4,7 +4,10 @@ Stadium tennis for the TV, played with your body. Prop your phone up and its cam
 your arm is the racket. Static web game (three.js + PeerJS + MediaPipe), £0, no accounts.
 Address: https://8kbtcrn6ws-star.github.io/air-tennis/ (it also sits on the Zavbox shelf).
 
-**v2.1:** the body camera is the only control. (Swing-your-phone and hand-only modes were removed.)
+**v3:** the body camera is still the only control. New in v3: more accurate swing tracking (backhands with a hidden
+wrist, short wind-ups, overheads with the hand out of frame; far fewer false swings; hit timing corrected for camera
+delay), new skinned 3D players, net, umpire's chair, stands and crowd, new daylight lighting and court surface, and a
+redesigned TV and phone UI.
 
 ## Play it (Zav)
 1. Open Air Tennis on the MacBook (from Zavbox, or the link above) and put it on the TV.
@@ -19,6 +22,9 @@ Address: https://8kbtcrn6ws-star.github.io/air-tennis/ (it also sits on the Zavb
 6. Choose a mode with the buttons on the phone (or on the TV with arrow keys + Enter or the mouse).
 
 Video never leaves the phone. Only tiny pose/swing messages (about 100 bytes) go to the TV.
+Swing packets carry three optional v3 fields: `ago` (ms since the estimated contact moment, 0-300; the TV backdates
+the swing by up to 150 ms so camera delay doesn't make you late), `c` (detector confidence 0-1) and `n` (per-player
+swing counter). Network delay is not included in `ago`.
 If someone leaves the picture the phone says "Step into view" and the TV pauses until they're back.
 If the camera was refused: on iPhone open Settings > Safari > Camera > Allow (or aA > Website Settings > Camera), then reload.
 
@@ -50,16 +56,20 @@ direction. Waving your arm in front of you does nothing.
 
 ## Settings (TV menu, saved on that TV)
 Match length · Ball flight (Light / Medium / Realistic) · Swing sensitivity (Easier / Normal / Harder; also on the phone)
-· Aim help · Graphics (Basic / High with bloom; Zavbox passes its own Basic/High) · Sound · Music (procedural synth loop).
+· Aim help · Graphics (Basic / High with sun shadows; Zavbox passes its own Basic/High) · Sound · Music (procedural synth loop).
 Stats saved in the TV browser: best rally, best target score, match wins, matches, missed shots.
 
 ## Files
 - `index.html`, `styles.css`, `game.js`: TV page (menus, HUD, phone link, loop)
-- `scene.js`: three.js stadium (hard court, net with posts, floodlights, stands with an instanced crowd, umpire's chair),
-  jointed players with swing animations, broadcast camera, ball trail, impact bursts, target rings, ball robot
+- `ui.js`: presentation layer for both pages (menu panels, focus, records, player slots, HUD polish)
+- `scene.js`: three.js stadium, broadcast camera, ball trail, impact bursts, target rings, ball robot; loads `models.js`
+  (skinned players with racket and swing poses, net, umpire's chair, stands, instanced crowd; placeholders stay if it fails)
+- `render/textures.js`, `render/env.js`, `render/look.js`: code-generated court/sky textures, sky and lighting environment,
+  material and shadow setup (no downloaded or trademarked textures)
 - `sim.js`, `scoring.js`: game rules and physics (pure JS, unit-tested in Node)
 - `packets.js`: TV-side packet gate (clamps, rate limits, drops anything else) and the player slot map (2 cameras × 2 players)
-- `pose.js`: body-camera helpers: joints from MediaPipe, pose swing detector, 2-person tracker with stable IDs
+- `pose.js`: body-camera helpers: joints from MediaPipe, One Euro smoothing, pose swing detector, 2-person tracker
+  with stable IDs and bystander lock
 - `phone.html`, `phone.css`, `phone.js`: the phone page (join → Start camera → body setup → play)
 - `net.js`: PeerJS link (copied from Zavbox; room prefix `airtennis-`)
 - `audio.js`: all sounds and music synthesised with WebAudio
@@ -83,6 +93,8 @@ Free CDNs used: three.js 0.170 and PeerJS 1.5.5 from jsDelivr, qrcode-generator,
 - Up to 2 camera phones per TV (a third is refused).
 - PeerJS's free public broker has no uptime guarantee. If it's down, the TV says "Phone link offline".
 - Simplified tennis: no faults or lets on serve, no tiebreaks, games-to-N with no sets. The CPU has one difficulty.
-- Graphics: High uses bloom, shadows and an 86%-full crowd. Basic drops those (30% crowd). On a slow MacBook choose Basic.
+- Graphics: High uses sun shadows, tone mapping and an 86%-full crowd. Basic drops shadow maps (soft blobs instead,
+  30% crowd). On a slow MacBook choose Basic.
+- v3 tracking thresholds were tuned on synthetic poses and rendered clips, not real people yet.
 - The TV page still reacts to arrow keys/Enter/mouse for menus (and a hidden keyboard input the automated tests use);
   nothing on screen offers it as a way to play.

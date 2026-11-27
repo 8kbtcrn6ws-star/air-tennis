@@ -101,7 +101,7 @@ function cameraError(err) {
 }
 
 // ---------- the body camera (MediaPipe PoseLandmarker, 1 or 2 people, detected automatically) ----------
-const body = { n: 2, fixedN: 0, tracker: null, dets: [], lastSeen: [0, 0], visible: [false, false], cal: null, calSince: 0, countSince: 0, countN: 0, raiseSince: [0, 0], calDone: [false, false], swingDone: [false, false], lastPos: [0, 0], players: [], facing: "user", landmarker: null, people: 0, slots: [], lastSwings: [] };
+const body = { n: 2, fixedN: 0, tracker: null, dets: [], lastSeen: [0, 0], visible: [false, false], cal: null, calSince: 0, countSince: 0, countN: 0, raiseSince: [0, 0], calDone: [false, false], swingDone: [false, false], lastPos: [0, 0], swingN: [0, 0], players: [], facing: "user", landmarker: null, people: 0, slots: [], lastSwings: [] };
 const SLOT_COL = ["#d9ef4a", "#7fd0ff"];
 
 // n = people in front of this phone. Until setup has counted them, track up to 2.
@@ -146,7 +146,7 @@ async function startBody(forceN) {
     }
     state.camReady = true;
     beginBodyCal();
-    if (!NOCAM) requestAnimationFrame(poseLoop);
+    if (!NOCAM) nextPoseFrame();
   } catch (err) {
     state.error = cameraError(err);
     chip("chip-cam", "bad", "No camera");
@@ -206,27 +206,46 @@ function onSlots(m) {
 function paintHands() {
   for (let s = 0; s < 2; s++) $("hand-" + s).textContent = `P${slotName(s)}: ${(body.dets[s]?.config.hand || "right")}-handed`;
 }
-function poseLoop() {
+// Next camera frame: requestVideoFrameCallback where the browser has it (one call per real camera frame, with its
+// capture time), otherwise requestAnimationFrame.
+function nextPoseFrame() {
+  if (video && typeof video.requestVideoFrameCallback === "function") video.requestVideoFrameCallback((_, meta) => poseLoop(meta));
+  else requestAnimationFrame(() => poseLoop(null));
+}
+let lastFrameT = 0;
+function poseLoop(meta) {
   if (!body.landmarker || !video || state.mode !== "body") return;
   const now = performance.now();
   if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
+    // Swing speeds and `ago` use when the frame was captured, not when we got round to processing it.
+    let ft = meta?.captureTime > 0 && meta.captureTime <= now && now - meta.captureTime < 500 ? meta.captureTime : now;
+    ft = Math.max(ft, lastFrameT + 1);
+    lastFrameT = ft;
     let res = null;
     try { res = body.landmarker.detectForVideo(video, now); } catch (e) { state.error = String(e?.message || e); }
-    handlePoses(res?.landmarks || [], now / SLOWMO);
+    handlePoses(res?.landmarks || [], ft / SLOWMO, res?.worldLandmarks, (performance.now() - ft) / SLOWMO);
   }
-  requestAnimationFrame(poseLoop);
+  nextPoseFrame();
 }
 // One frame of poses -> slots -> swings, positions, visibility, setup steps. Also used by the tests.
-function handlePoses(list, now) {
-  const persons = list.map((lm) => { const p = personFrom(lm); if (p) p.raw = lm; return p; }).filter(Boolean);
+// worlds = MediaPipe worldLandmarks (metres) per pose; procMs = time from frame capture to now (added to `ago`).
+function handlePoses(list, now, worlds, procMs = 0) {
+  const persons = list.map((lm, i) => { const p = personFrom(lm, 0.5, worlds?.[i]); if (p) p.raw = lm; return p; }).filter(Boolean);
   body.people = persons.length;
   // Setup counts the people in front of the phone (1 or 2) once the count has been steady for a moment.
   if (body.cal === "view" && !body.fixedN) {
-    const c = Math.min(2, persons.length);
+    // Only count people about as big as the biggest one: someone small in the background isn't a player.
+    const big = Math.max(0, ...persons.map((p) => p.unit));
+    const c = Math.min(2, persons.filter((p) => p.unit >= big * 0.55).length);
     if (c !== body.countN) { body.countN = c; body.countSince = now; }
     else if (c >= 1 && c !== body.n && now - body.countSince > 800) { setPeople(c); body.calSince = 0; }
   }
+  // After setup the tracker locks onto the players (passers-by can't take a slot); re-running setup unlocks it.
+  if ((body.cal === "done") !== !!body.tracker.locked) { if (body.cal === "done") body.tracker.lock(); else body.tracker.unlock(); }
+  // Swings are off until the swing step of setup. Turning them on waits for a calm arm, so lowering the hand
+  // raised in the "raise your racket hand" step is never read as an overhead.
+  for (const d of body.dets) d.setEnabled(body.cal === "swing" || body.cal === "done");
   const slots = body.tracker.update(persons, now);
   body.slots = slots.map((s) => ({ slot: s.slot, id: s.id, seen: !!s.person, cx: s.person ? round(s.person.cx) : null, full: !!s.person?.full }));
   for (const { slot: s, person: p } of slots) {
@@ -244,7 +263,8 @@ function handlePoses(list, now) {
       if (body.lastSwings.length > 50) body.lastSwings.shift();
       if (body.cal === "swing" && (sw.kind === "fh" || sw.kind === "bh")) body.swingDone[s] = true;
       if (body.cal === "done") {
-        send({ t: "swing", s, dir: sw.dir, spd: sw.power, k: sw.kind, lift: sw.lift, ts: Date.now() });
+        body.swingN[s] = (body.swingN[s] || 0) + 1;
+        send({ t: "swing", s, dir: sw.dir, spd: sw.power, k: sw.kind, lift: sw.lift, ago: Math.min(300, Math.round(sw.ago + procMs)), c: sw.c, n: body.swingN[s] });
         $("swing-read").textContent = `P${slotName(s)}: ${{ fh: "forehand", bh: "backhand", oh: "overhead", sv: "serve" }[sw.kind]} · power ${Math.round(sw.power * 100)}%`;
         buzz(15);
       } else $("swing-read").textContent = `${{ fh: "Forehand", bh: "Backhand", oh: "Overhead", sv: "Serve" }[sw.kind]} detected`;
@@ -320,7 +340,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 $("start-btn").addEventListener("click", () => startBody());
 
 // Hidden test hook (not shown anywhere on the page).
-window.__phone = { state, sent, join, body, startBody, feedPoses: (list, t) => handlePoses(list, t ?? performance.now()), onMessage: (m) => client.emit("message", m) };
+window.__phone = { state, sent, join, body, startBody, feedPoses: (list, t, worlds) => handlePoses(list, t ?? performance.now(), worlds), onMessage: (m) => client.emit("message", m) };
 
 const initial = codeFromLocation();
 if (initial) { $("code").value = initial; join(initial); }

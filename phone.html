@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#04060f">
+  <meta name="theme-color" content="#060a18">
   <title>Air Tennis · Phone</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="phone.css">
@@ -12,10 +12,11 @@
   { "imports": { "peerjs": "https://cdn.jsdelivr.net/npm/peerjs@1.5.5/+esm" } }
   </script>
   <script src="phone.js" type="module"></script>
+  <script src="ui.js" type="module"></script>
 </head>
 <body data-view="join">
   <header class="top">
-    <h1><span class="ball" aria-hidden="true"></span>Air <b>Tennis</b></h1>
+    <p class="mark"><span class="ball" aria-hidden="true"></span>Air <b>Tennis</b></p>
     <div class="chips">
       <span class="chip" id="chip-link" data-state="off">TV</span>
       <span class="chip" id="chip-cam" data-state="off">Camera</span>
@@ -24,27 +25,43 @@
   </header>
 
   <!-- 1. join -->
-  <section id="v-join" class="view">
-    <h2>Connect to the TV</h2>
-    <p class="lead">Type the 4-letter code on the TV, or scan its QR code.</p>
-    <form id="join-form" autocomplete="off">
-      <input id="code" name="code" inputmode="text" autocapitalize="characters" maxlength="4" placeholder="ABCD" aria-label="Room code" spellcheck="false">
-      <button class="btn" type="submit">Connect</button>
-    </form>
-    <p id="join-err" class="err" role="alert"></p>
+  <section id="v-join" class="view page">
+    <div class="page-main">
+      <p class="eyebrow">Step 1 of 2</p>
+      <h1>Join the TV</h1>
+      <p class="lead">Type the 4-letter code shown on the TV, or scan its QR code with your camera.</p>
+      <form id="join-form" autocomplete="off">
+        <input id="code" name="code" inputmode="text" autocapitalize="characters" maxlength="4" placeholder="ABCD" aria-label="Room code" spellcheck="false">
+        <p id="join-err" class="err" role="alert"></p>
+        <button class="btn" type="submit">Connect</button>
+      </form>
+    </div>
+    <p class="fine">Video never leaves this phone. Only tiny movement messages go to the TV.</p>
   </section>
 
   <!-- 2. start the camera (a tap is needed so iPhone Safari can ask for the camera) -->
-  <section id="v-start" class="view" hidden>
-    <h2>Body camera</h2>
-    <ol class="how">
-      <li>Prop this phone up about <b>2-3 m</b> from where you'll play, screen facing you.</li>
-      <li>1 or 2 players stand side by side with their <b>whole body</b> in the picture, head to feet.</li>
-      <li>Your arm is the racket: take it back, then swing through.</li>
-    </ol>
-    <button class="btn big" id="start-btn" type="button">Start camera</button>
-    <p class="fine">Your phone will ask to use the camera. Video stays on this phone. Nothing is uploaded or saved.</p>
-    <p id="start-err" class="err" role="alert"></p>
+  <section id="v-start" class="view page" hidden>
+    <div class="page-main">
+      <p class="eyebrow">Step 2 of 2</p>
+      <h1>Set up the camera</h1>
+      <svg class="scene-art" viewBox="0 0 320 132" aria-hidden="true">
+        <line class="floor" x1="10" y1="104" x2="310" y2="104"/>
+        <rect class="phone" x="34" y="56" width="22" height="40" rx="4"/><line class="stand" x1="45" y1="96" x2="38" y2="104"/><line class="stand" x1="45" y1="96" x2="52" y2="104"/>
+        <path class="cone" d="M58 66 L250 14 L250 104 L58 84 Z"/>
+        <g class="person"><circle cx="230" cy="26" r="8"/><path d="M230 35 v34 M230 44 l-14 14 M230 44 l16 -14 M230 69 l-10 33 M230 69 l10 33"/></g>
+        <path class="dim" d="M58 114 v8 M58 118 H230 M230 114 v8"/><text x="144" y="112" text-anchor="middle">2–3 m</text>
+      </svg>
+      <ol class="how">
+        <li><span>Prop this phone up about <b>2–3 m</b> away, screen facing you.</span></li>
+        <li><span>1 or 2 players stand side by side, <b>whole body</b> in the picture, head to feet.</span></li>
+        <li><span>Your arm is the racket: take it back, then swing through.</span></li>
+      </ol>
+      <p id="start-err" class="err card-err" role="alert"></p>
+    </div>
+    <div class="page-foot">
+      <button class="btn big" id="start-btn" type="button">Start camera</button>
+      <p class="fine">Your phone will ask to use the camera. Video stays on this phone. Nothing is uploaded or saved.</p>
+    </div>
   </section>
 
   <!-- 3. setup / play -->
@@ -52,46 +69,64 @@
     <div class="cam" id="cam-wrap">
       <video id="video" playsinline muted autoplay></video>
       <canvas id="overlay"></canvas>
+      <svg class="guide" viewBox="0 0 100 250" aria-hidden="true"><circle cx="50" cy="22" r="15"/><path d="M24 62 Q24 44 42 44 H58 Q76 44 76 62 V142 Q76 150 68 150 V230 Q68 236 62 236 H56 Q52 236 52 230 V160 H48 V230 Q48 236 44 236 H38 Q32 236 32 230 V150 Q24 150 24 142 Z"/><ellipse class="spot" cx="50" cy="240" rx="34" ry="6"/></svg>
       <div class="cam-msg" id="cam-msg" hidden>Step into view</div>
-      <p class="cam-note">Camera stays on this phone. Nothing is uploaded or saved.</p>
+      <p class="cam-note">Camera stays on this phone</p>
     </div>
-    <div class="cal">
-      <p class="step-label" id="step-label">Setup</p>
-      <h2 id="step-title">Getting ready…</h2>
-      <p class="lead" id="step-help"></p>
-      <div class="meter" aria-hidden="true"><div class="meter-track"><div id="meter-dot" class="meter-dot"></div></div></div>
-      <p class="swing-read" id="swing-read"></p>
-      <p class="slot-line" id="slot-line" hidden></p>
-    </div>
-    <div class="remote" id="remote">
-      <div class="grid4">
-        <button class="mini" data-menu="match">1P vs CPU</button>
-        <button class="mini" data-menu="match2">2P Match</button>
-        <button class="mini" data-menu="rally2">2P Rally</button>
-        <button class="mini" data-menu="doubles">Doubles</button>
-        <button class="mini" data-menu="practice">Ball Machine</button>
-        <button class="mini" data-menu="training">Training</button>
-        <button class="mini" data-menu="target">Target</button>
-        <button class="mini" data-menu="rally">Rally Challenge</button>
+    <div class="sheet">
+      <ol class="dots" id="step-dots" aria-hidden="true"><li>In view</li><li>Hand up</li><li>Swing</li></ol>
+      <div class="cal">
+        <p class="step-label" id="step-label">Setup</p>
+        <h2 id="step-title">Getting ready…</h2>
+        <p class="lead" id="step-help"></p>
+        <div class="ready" id="ready-card">
+          <p class="ready-title">You're in</p>
+          <div class="badges" id="ready-players"></div>
+          <p class="ready-sub" id="ready-sub"></p>
+        </div>
+        <div class="meter" aria-hidden="true"><span>L</span><div class="meter-track"><div id="meter-dot" class="meter-dot"></div></div><span>R</span></div>
+        <p class="swing-read" id="swing-read"></p>
+        <p class="slot-line" id="slot-line" hidden></p>
+        <div class="setup-actions">
+          <button class="mini ghost" id="skip-cal">Skip setup</button>
+          <button class="mini ghost" id="flip-cam">Flip camera</button>
+        </div>
       </div>
-      <div class="row">
-        <button class="mini ghost" data-menu="pause">Pause</button>
-        <button class="mini ghost" data-menu="menu">TV menu</button>
-        <button class="mini ghost" id="recal">Redo setup</button>
+      <div class="remote" id="remote">
+        <button class="btn" id="open-modes" type="button">Choose a mode</button>
+        <div class="row">
+          <button class="mini" data-menu="pause">Pause</button>
+          <button class="mini" data-menu="menu">TV menu</button>
+        </div>
+        <details class="drawer modes" id="modes-sheet">
+          <summary>Modes</summary>
+          <div class="grid4">
+            <button class="mini" data-menu="match">1P vs CPU</button>
+            <button class="mini" data-menu="match2">2P Match</button>
+            <button class="mini" data-menu="rally2">2P Rally</button>
+            <button class="mini" data-menu="doubles">Doubles</button>
+            <button class="mini" data-menu="practice">Ball Machine</button>
+            <button class="mini" data-menu="training">Training</button>
+            <button class="mini" data-menu="target">Target</button>
+            <button class="mini" data-menu="rally">Rally Challenge</button>
+          </div>
+        </details>
+        <details class="drawer" id="remote-more">
+          <summary>Player options</summary>
+          <div class="row" id="body-row">
+            <button class="mini ghost" id="recal">Redo setup</button>
+            <button class="mini ghost" id="hand-0">P1: right-handed</button>
+            <button class="mini ghost" id="hand-1" hidden>P2: right-handed</button>
+          </div>
+          <label class="sens">Swing sensitivity
+            <select id="sens">
+              <option value="easier">Easier</option>
+              <option value="normal" selected>Normal</option>
+              <option value="harder">Harder</option>
+            </select>
+          </label>
+        </details>
       </div>
-      <div class="row" id="body-row">
-        <button class="mini ghost" id="skip-cal">Skip setup</button>
-        <button class="mini ghost" id="flip-cam">Flip camera</button>
-        <button class="mini ghost" id="hand-0">P1: right-handed</button>
-        <button class="mini ghost" id="hand-1" hidden>P2: right-handed</button>
-      </div>
-      <label class="sens">Swing sensitivity
-        <select id="sens">
-          <option value="easier">Easier</option>
-          <option value="normal" selected>Normal</option>
-          <option value="harder">Harder</option>
-        </select>
-      </label>
     </div>
   </section>
 </body>

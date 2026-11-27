@@ -57,6 +57,14 @@ export function createPacketGate(opts = {}) {
         if (msg.k) out.k = msg.k;
         const lift = num(msg.lift);
         if (lift !== null) out.lift = clamp(lift, -1, 1);
+        // Body-camera extras (all optional): ago = ms since the estimated contact (the TV backdates the swing by it),
+        // c = detector confidence 0..1, n = per-slot swing counter.
+        const ago = num(msg.ago);
+        if (ago !== null) out.ago = Math.round(clamp(ago, 0, 300));
+        const c = num(msg.c);
+        if (c !== null) out.c = clamp(c, 0, 1);
+        const n = num(msg.n);
+        if (n !== null && n >= 0) out.n = Math.floor(Math.min(n, 1e9));
         return ok(out);
       }
       case "vis": {
