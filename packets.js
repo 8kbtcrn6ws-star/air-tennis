@@ -1,13 +1,13 @@
 // The TV's gatekeeper for phone packets. The phone only ever reports positions, visibility and swings;
 // the TV decides hits and scores. Anything malformed, out of range or too frequent is dropped.
 // One gate per phone connection. A body-camera phone can drive 2 players, so pos/swing/vis carry an
-// optional slot `s` (0 or 1) and each slot has its own rate limits.
+// optional slot `s` (0 or 1) and each slot has its own rate limits. A phone racket drives 1 player (no `s`).
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 export const MENU_KEYS = ["up", "down", "left", "right", "a", "b", "pause", "practice", "match", "rally", "menu", "restart", "match2", "rally2", "doubles", "training", "target"];
 export const SWING_KINDS = ["fh", "bh", "oh", "sv"];
-export const PHONE_MODES = ["body"];
+export const PHONE_MODES = ["body", "racket"]; // body camera (1-2 players) or phone racket (1 player)
 
 export function createPacketGate(opts = {}) {
   const now = opts.now || (() => performance.now());

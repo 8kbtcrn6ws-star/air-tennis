@@ -558,7 +558,9 @@ export function createSim(opts = {}) {
     let target = pl.tx;
     const ic = sim.intercepts[pl.side];
     const mine = ic && sim.ball.live && sim.ball.hitter !== pl.side && sim.responder[pl.side] === pl.id;
-    if (mine) target = lerp(pl.tx, ic.x - 0.2 * s, sim.assist);
+    // autoRun (phone-racket players have no way to move): run to the ball, then back to the middle.
+    if (mine) target = lerp(pl.tx, ic.x - 0.2 * s, pl.autoRun ? 1 : sim.assist);
+    else if (pl.autoRun) target = pl.homeX;
     const sp = 9 * (0.75 + 0.25 * pl.stamina);
     const dx = clamp(target - pl.x, -sp * dt, sp * dt);
     const lim = doubles() ? 6 : PLAYER_X_LIMIT;

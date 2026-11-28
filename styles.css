@@ -256,3 +256,6 @@ body[data-screen="pause"] .hud .sboxes, body[data-screen="pause"] .hud .hint { o
 .loading { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; gap: 1.2rem; font-size: 1.5rem; font-weight: 600; letter-spacing: 0.04em; color: var(--muted); background: var(--bg); }
 .spinner { width: 2.2rem; height: 2.2rem; border-radius: 50%; border: 0.25rem solid rgba(255, 255, 255, 0.14); border-top-color: var(--text); animation: spin 900ms linear infinite; }
 body:not([data-screen="loading"]) .loading { display: none; }
+
+/* Phone racket setup: no left/right position meter (the player runs to the ball by itself). */
+#cal[data-control="racket"] .meter { display: none; }

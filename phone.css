@@ -144,3 +144,32 @@ body[data-view="play"] #chip-cam[data-state="ok"] { display: none; }
 #modes-sheet[open] > .grid4 { margin-top: 12px; }
 .btn.ghost-btn { background: var(--panel-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--hair-2); }
 body[data-ready] .slot-line { display: none; }
+
+/* ---------- phone racket (default control) ---------- */
+body[data-view="join"] #chip-motion, body[data-view="start"] #chip-motion, body[data-view="play"] #chip-motion,
+body[data-view="racket-start"] #chip-cam, body[data-view="racket-start"] #chip-view, body[data-view="racket"] #chip-cam, body[data-view="racket"] #chip-view { display: none; }
+body[data-view="racket-start"] #chip-motion { display: none; }
+.racket-art .swing-arc { fill: none; stroke: rgba(215, 242, 58, 0.55); stroke-width: 3; stroke-dasharray: 6 6; stroke-linecap: round; }
+.racket-art .swing-arrow { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.racket-art .phone { fill: var(--panel); stroke: var(--text); stroke-width: 2.5; }
+.racket-art .screen { fill: rgba(59, 123, 255, 0.35); }
+.racket-art .hand { fill: #2a3561; stroke: var(--muted); stroke-width: 2; }
+.racket-art .strap { stroke: var(--muted); stroke-width: 2; stroke-dasharray: 3 3; }
+.tip { margin-top: 14px; font-size: 15px; line-height: 1.4; color: var(--muted); font-weight: 500; }
+.link-btn { min-height: 44px; border: 0; background: none; color: var(--muted); font-size: 15px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.racket-view { min-height: 100dvh; display: flex; flex-direction: column; }
+.racket-main { flex: 1; display: flex; flex-direction: column; gap: 8px; padding: calc(var(--safe-t) + 74px) var(--pad) 36px; background: radial-gradient(ellipse at 50% 20%, #142050, var(--bg) 70%); }
+.racket-main .step-label { display: block; margin-top: 10px; }
+.racket-main h2 { font-size: 30px; }
+.racket-main .lead { font-size: 17px; }
+.hit-card { display: none; margin-top: 8px; padding: 22px 20px; border-radius: 22px; background: linear-gradient(180deg, var(--panel-2), var(--panel)); box-shadow: inset 0 0 0 1px var(--hair); gap: 12px; }
+.hit-kind { font-size: 44px; line-height: 1; font-weight: 700; letter-spacing: -0.01em; }
+.hit-sub { font-size: 15px; color: var(--muted); font-weight: 500; }
+.power { height: 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.power i { display: block; width: 0; height: 100%; border-radius: 10px; background: var(--accent); transition: width 120ms var(--ease); }
+.hit-card.is-hit { box-shadow: inset 0 0 0 2px var(--ok); }
+body[data-ready] .hit-card { display: grid; }
+body[data-ready] #racket-dots, body[data-ready] #r-step-label, body[data-ready] .racket-main .setup-actions { display: none; }
+body[data-ready] .racket-main .slot-line { display: block; }
+.racket-sheet { margin-top: 0; }
+body[data-view="racket"] #hand-0, body[data-view="racket"] #hand-1 { display: none; }

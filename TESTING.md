@@ -1,4 +1,4 @@
-# Testing Air Tennis (v3: body camera only)
+# Testing Air Tennis (v3.2: phone racket by default, body camera as the second control)
 
 ## Run
 ```bash
@@ -15,6 +15,16 @@ python3 tests/test_v2.py                     # 52 headless-Chrome checks: modes,
 python3 tests/shots_v3.py                    # 2P mid-rally screenshots on High and Basic
 python3 tests/ui_screens.py                  # UI screenshot set at 1920x1080/1280x720 and two phone sizes (tests/screens/ui-v3/)
 ```
+
+## Phone racket (v3.2)
+- `node --test tests/racket.test.mjs tests/racket-tv.test.mjs`: swing detection on synthetic DeviceMotion traces
+  (`tests/motion-synth.mjs`): forehand / backhand / overhead / serve at 60 and 100 Hz, light to hard; left-handers via
+  the practice forehand; iPhone gravity sign; power and peak timing; topspin/slice; no false swings while walking,
+  jogging, picking the phone up, pocketing, flicking, handing over or typing; packet gate, slots, auto-run.
+- `python3 tests/test_racket_e2e.py` (server on :4180, internet needed for the relay): TV + two phone pages in separate
+  browser contexts, linked through the MQTT relay; fake devicemotion events drive setup and a 2P rally.
+  Screenshots in `tests/screens/racket/`.
+- Body-camera browser tests open the phone page with `&control=body`.
 
 ## What is covered
 **Unit tests**

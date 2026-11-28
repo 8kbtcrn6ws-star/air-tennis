@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="phone.css">
   <script type="importmap">
-  { "imports": { "peerjs": "https://cdn.jsdelivr.net/npm/peerjs@1.5.5/+esm" } }
+  { "imports": { "peerjs": "https://cdn.jsdelivr.net/npm/peerjs@1.5.5/+esm", "mqtt": "https://cdn.jsdelivr.net/npm/mqtt@5.10.1/+esm" } }
   </script>
   <script src="phone.js" type="module"></script>
   <script src="ui.js" type="module"></script>
@@ -20,6 +20,7 @@
     <div class="chips">
       <span class="chip" id="chip-link" data-state="off">TV</span>
       <span class="chip" id="chip-cam" data-state="off">Camera</span>
+      <span class="chip" id="chip-motion" data-state="off">Motion</span>
       <span class="chip" id="chip-view" data-state="off">In view</span>
     </div>
   </header>
@@ -36,7 +37,37 @@
         <button class="btn" type="submit">Connect</button>
       </form>
     </div>
-    <p class="fine">Video never leaves this phone. Only tiny movement messages go to the TV.</p>
+    <p class="fine">Only tiny swing messages go to the TV. Nothing is recorded or saved.</p>
+  </section>
+
+  <!-- 2a. phone racket (default): a tap so iPhone Safari can ask for motion access -->
+  <section id="v-racket-start" class="view page" hidden>
+    <div class="page-main">
+      <p class="eyebrow">Step 2 of 2</p>
+      <h1>Hold phone like a racket</h1>
+      <svg class="scene-art racket-art" viewBox="0 0 320 150" aria-hidden="true">
+        <path class="swing-arc" d="M70 120 Q 160 10 262 104"/>
+        <path class="swing-arrow" d="M250 92 L264 106 L246 110"/>
+        <g class="held" transform="rotate(-24 160 92)">
+          <rect class="phone" x="146" y="36" width="28" height="56" rx="6"/>
+          <rect class="screen" x="150" y="42" width="20" height="40" rx="3"/>
+          <path class="hand" d="M140 86 h40 a8 8 0 0 1 8 8 v14 a14 14 0 0 1 -14 14 h-28 a14 14 0 0 1 -14 -14 v-14 a8 8 0 0 1 8 -8 z"/>
+          <path class="strap" d="M160 122 v22"/>
+        </g>
+      </svg>
+      <ol class="how">
+        <li><span>Grip the <b>bottom of the phone</b> firmly, top pointing up, like a racket handle.</span></li>
+        <li><span>Swing it through: <b>forehand, backhand</b>, or over your head for a <b>smash or serve</b>.</span></li>
+        <li><span>Your player runs to the ball. You just time the swing. <b>2 players = 2 phones.</b></span></li>
+      </ol>
+      <p class="tip">Use a wrist strap or case with grip if you have one, and give yourself room to swing.</p>
+      <p id="racket-err" class="err card-err" role="alert"></p>
+    </div>
+    <div class="page-foot">
+      <button class="btn big" id="racket-btn" type="button">Start racket</button>
+      <button class="link-btn" id="use-body" type="button">Use the body camera instead</button>
+      <p class="fine">Your phone may ask for motion access. Only swing messages go to the TV.</p>
+    </div>
   </section>
 
   <!-- 2. start the camera (a tap is needed so iPhone Safari can ask for the camera) -->
@@ -60,8 +91,29 @@
     </div>
     <div class="page-foot">
       <button class="btn big" id="start-btn" type="button">Start camera</button>
+      <button class="link-btn" id="use-racket" type="button">Use the phone as a racket instead</button>
       <p class="fine">Your phone will ask to use the camera. Video stays on this phone. Nothing is uploaded or saved.</p>
     </div>
+  </section>
+
+  <!-- 3a. phone racket: setup, then play -->
+  <section id="v-racket" class="view racket-view" hidden>
+    <div class="racket-main">
+      <ol class="dots" id="racket-dots" aria-hidden="true"><li>Hold still</li><li>Forehand</li><li>Backhand</li></ol>
+      <p class="step-label" id="r-step-label">Setup</p>
+      <h2 id="r-step-title">Getting ready…</h2>
+      <p class="lead" id="r-step-help"></p>
+      <div class="hit-card" id="hit-card" data-kind="">
+        <p class="hit-kind" id="hit-kind">Ready</p>
+        <div class="power" aria-hidden="true"><i id="power-fill"></i></div>
+        <p class="hit-sub" id="hit-sub">Swing when the ball comes to you.</p>
+      </div>
+      <p class="slot-line" id="r-slot-line" hidden></p>
+      <div class="setup-actions">
+        <button class="mini ghost" id="r-skip">Skip setup</button>
+      </div>
+    </div>
+    <div class="sheet racket-sheet" id="racket-remote-slot"></div>
   </section>
 
   <!-- 3. setup / play -->

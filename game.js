@@ -11,9 +11,10 @@ const SKEY = "airtennis.settings.v1";
 const STKEY = "airtennis.stats.v1";
 
 // ---------- settings + stats ----------
-const DEFAULTS = { games: 3, flight: "medium", sens: "normal", assist: true, gfx: "high", sound: true, music: false };
+const DEFAULTS = { games: 3, flight: "medium", sens: "normal", assist: true, gfx: "high", sound: true, music: false, control: "racket" };
 function loadJSON(k, d) { try { return { ...d, ...(JSON.parse(localStorage.getItem(k)) || {}) }; } catch { return { ...d }; } }
 const settings = loadJSON(SKEY, DEFAULTS);
+if (!["racket", "body"].includes(settings.control)) settings.control = "racket";
 const q = params.get("quality") || params.get("q");
 if (q === "low" || q === "basic") settings.gfx = "basic";
 if (q === "high") settings.gfx = "high";
@@ -87,6 +88,9 @@ function back() {
 const GAMES_OPTS = [1, 2, 3, 5];
 const FLIGHT_LABEL = { light: "Light", medium: "Medium", realistic: "Realistic" };
 const SENS_LABEL = { easier: "Easier", normal: "Normal", harder: "Harder" };
+const CONTROL_LABEL = { racket: "Phone racket", body: "Body camera" };
+// What the phone is told on connect and whenever a setting it uses changes.
+const phoneCfg = () => ({ t: "cfg", sens: settings.sens, control: settings.control });
 function paintSettings() {
   $("set-games").textContent = `first to ${settings.games} game${settings.games > 1 ? "s" : ""}`;
   $("set-flight").textContent = FLIGHT_LABEL[settings.flight];
@@ -95,12 +99,15 @@ function paintSettings() {
   $("set-gfx").textContent = settings.gfx === "basic" ? "Basic" : "High";
   $("set-sound").textContent = settings.sound ? "On" : "Off";
   $("set-music").textContent = settings.music ? "On" : "Off";
+  $("set-control").textContent = CONTROL_LABEL[settings.control];
+  paintControlText();
 }
 function cycle(list, v) { return list[(list.indexOf(v) + 1) % list.length]; }
 function toggleSetting(k) {
   if (k === "games") settings.games = cycle(GAMES_OPTS, settings.games);
   if (k === "flight") settings.flight = cycle(Object.keys(FLIGHT), settings.flight);
-  if (k === "sens") { settings.sens = cycle(Object.keys(SENS_LABEL), settings.sens); host?.broadcast({ t: "cfg", sens: settings.sens }); }
+  if (k === "sens") { settings.sens = cycle(Object.keys(SENS_LABEL), settings.sens); host?.broadcast(phoneCfg()); }
+  if (k === "control") { settings.control = cycle(Object.keys(CONTROL_LABEL), settings.control); host?.broadcast(phoneCfg()); }
   if (k === "assist") settings.assist = !settings.assist;
   if (k === "sound") { settings.sound = !settings.sound; audio.muted = !settings.sound; }
   if (k === "music") { settings.music = !settings.music; setMusic(settings.music && settings.sound); }
@@ -177,7 +184,7 @@ function pause(reason, who = null) {
   if (screen !== "game") return;
   pauseReason = reason;
   const seeWho = who === null || !TWO() ? "you" : playerName(who);
-  const titles = { user: ["Paused", ""], view: [`Can't see ${seeWho}`, "Step into view of the phone camera so it can see your whole body, head to feet. The game carries on by itself when you're back."], link: ["Phone disconnected", "The phone stopped sending. Check it's awake, propped up and on the Air Tennis page."] };
+  const titles = { user: ["Paused", ""], view: [`Can't see ${seeWho}`, "Step into view of the phone camera so it can see your whole body, head to feet. The game carries on by itself when you're back."], link: ["Phone disconnected", "The phone stopped sending. Check it's awake and still on the Air Tennis page."] };
   const [t, m] = titles[reason] || titles.user;
   $("pause-title").textContent = t;
   $("pause-msg").textContent = m;
@@ -309,7 +316,38 @@ function popup(text, x, y, z) {
   setTimeout(() => el.remove(), 950);
 }
 function setHint() {
-  $("hint").textContent = "Wind up and swing: your arm is the racket";
+  $("hint").textContent = settings.control === "body" ? "Wind up and swing: your arm is the racket" : "Swing your phone like a racket. Your player runs to the ball.";
+}
+// TV words for the chosen control: phone racket (default) or body camera.
+const CAL_TEXT = {
+  racket: {
+    eyebrow: "Phone racket", title: "Phone setup", sub: "Follow the steps on your phone. Hold it firmly, like the handle of a racket.",
+    steps: ["Phone connected", "Motion sensors on", "Hold still, racket head up", "Practise a forehand", "Practise a backhand"],
+    msgs: ["Waiting for your phone…", "Allow motion on the phone…", "Hold the phone still, top pointing up.", "Swing a forehand with the phone.", "Now swing a backhand.", "All set! Pick a mode to play."],
+    bar: "Scan the code, or open <b id=\"phone-url\">phone.html</b> and type the code. Hold your phone like a racket. 2 players = 2 phones.",
+    tagline: "Your phone is the racket. Swing it."
+  },
+  body: {
+    eyebrow: "Body camera", title: "Camera setup", sub: "Follow the steps on your phone. This screen shows what it picks up.",
+    steps: ["Phone connected", "Camera on, body tracking loaded", "Whole body in view", "Racket hand raised above the head", "Wind up and swing a forehand"],
+    msgs: ["Waiting for your phone…", "Loading body tracking on the phone…", "Step back until the camera sees your whole body.", "Raise your racket hand above your head.", "Wind up and swing a forehand.", "All set! Pick a mode to play."],
+    bar: "Scan the code, or open <b id=\"phone-url\">phone.html</b> and type the code. Prop it up 2–3 m away, whole body in view.",
+    tagline: "Prop your phone up. Your arm is the racket."
+  }
+};
+let calKind = null; // what the connected phone actually uses (it can differ from the setting while switching)
+function paintControlText() {
+  const c = CAL_TEXT[calKind || settings.control];
+  $("cal").dataset.control = calKind || settings.control;
+  $("cal-eyebrow").textContent = c.eyebrow;
+  $("cal-title").textContent = c.title;
+  $("cal-sub").textContent = c.sub;
+  document.querySelectorAll("#cal-steps li").forEach((li, i) => { li.lastChild.textContent = c.steps[i]; });
+  const url = $("phone-url")?.textContent || "phone.html";
+  $("pb-how").innerHTML = CAL_TEXT[settings.control].bar;
+  $("phone-url").textContent = url;
+  $("tagline").textContent = CAL_TEXT[settings.control].tagline;
+  setHint();
 }
 
 // ---------- sim events -> effects, sound, stats ----------
@@ -553,14 +591,19 @@ function onPhoneMessage(raw, from = "local") {
   lastPhoneMsg = performance.now();
   switch (m.t) {
     case "hello":
-      sendTo(from, { t: "cfg", sens: settings.sens });
+      sendTo(from, phoneCfg());
       break;
     case "mode": {
       phoneKind = m.m;
+      calKind = m.m;
+      const prev = slotMap.get(from);
+      if (prev) for (const id of prev.players) if (sim.players[id]) sim.players[id].autoRun = false;
       connKind.set(from, m.m);
       const a = slotMap.assign(from, m.m, m.m === "body" ? m.n : 1);
+      // A phone racket can't move the player: the player runs to the ball by itself.
+      for (const id of a.players || []) if (sim.players[id]) sim.players[id].autoRun = m.m === "racket";
       sendTo(from, a.error ? { t: "slots", error: "full" } : { t: "slots", p: a.players, cam: a.cam });
-      setHint();
+      paintControlText();
       break;
     }
     case "pos": {
@@ -630,8 +673,7 @@ function setCal(step) {
     li.classList.toggle("is-done", n <= step);
     li.classList.toggle("is-now", n === step + 1);
   });
-  const msgs = ["Waiting for your phone…", "Loading body tracking on the phone…", "Step back until the camera sees your whole body.", "Raise your racket hand above your head.", "Wind up and swing a forehand.", "All set! Pick a mode to play."];
-  $("cal-msg").textContent = msgs[Math.min(step, 5)];
+  $("cal-msg").textContent = CAL_TEXT[calKind || settings.control].msgs[Math.min(step, 5)];
   if (step >= 5) {
     inputMode = "phone";
     setHint();
@@ -656,21 +698,24 @@ async function startLink() {
   try {
     host = new TvHost();
     host.on("msg", ({ msg, from }) => onPhoneMessage(msg, from));
-    host.on("join", ({ count }) => {
+    host.on("join", ({ count, via }) => {
       st.dataset.state = "ok";
-      st.textContent = count === 1 ? "Phone connected" : `${count} phones connected`;
+      st.textContent = (count === 1 ? "Phone connected" : `${count} phones connected`) + (via === "relay" ? " (relay)" : "");
       calStep = 0;
       setCal(1);
-      host.broadcast({ t: "cfg", sens: settings.sens });
+      host.broadcast(phoneCfg());
       host.broadcast({ t: "state", screen, mode: sim.mode });
     });
     host.on("leave", ({ count, from }) => {
-      if (from) { slotMap.release(from); gates.delete(from); connKind.delete(from); }
+      if (from) {
+        for (const id of slotMap.get(from)?.players || []) if (sim.players[id]) sim.players[id].autoRun = false;
+        slotMap.release(from); gates.delete(from); connKind.delete(from);
+      }
       st.dataset.state = count ? "ok" : "wait";
       st.textContent = count ? `${count} phone connected` : "Waiting for a phone";
       if (!count) { inputMode = "kb"; calStep = 0; setHint(); if (screen === "game") pause("link"); }
     });
-    const { code } = await host.open();
+    const { code } = await host.open({ peer: params.get("relay") !== "1" });
     $("code").textContent = code;
     st.dataset.state = "wait";
     st.textContent = "Waiting for a phone";
@@ -679,6 +724,7 @@ async function startLink() {
     $("phone-url").textContent = url.host + url.pathname.replace(/phone\.html$/, "") + "phone.html";
     await drawQr(url.href);
     window.__airTennis.code = code;
+    window.__airTennis.linkVia = { direct: !!host.peer, relay: host.relayState === "on" };
   } catch (err) {
     st.dataset.state = "bad";
     st.textContent = "Phone link offline. Check the internet connection, then reload this page.";

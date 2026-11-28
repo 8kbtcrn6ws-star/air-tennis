@@ -5,7 +5,7 @@
   <script src="./zavbox-gate.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Air Tennis</title>
-  <meta name="description" content="Air Tennis: prop your phone up, step into view and play stadium tennis on the TV with your whole body.">
+  <meta name="description" content="Air Tennis: swing your phone like a racket and play stadium tennis on the TV. Or prop it up and play with your whole body.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preload" href="fonts/urbanist-700.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
@@ -16,6 +16,7 @@
       "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
       "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
       "peerjs": "https://cdn.jsdelivr.net/npm/peerjs@1.5.5/+esm",
+      "mqtt": "https://cdn.jsdelivr.net/npm/mqtt@5.10.1/+esm",
       "qrcode-generator": "https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.mjs"
     }
   }
@@ -31,7 +32,7 @@
   <section id="menu" class="screen" aria-label="Main menu" data-panel="home">
     <header class="menu-top">
       <h1 class="wordmark"><span class="ball-glyph" aria-hidden="true"></span><span>Air <b>Tennis</b></span></h1>
-      <p class="tagline">Prop your phone up. Your arm is the racket.</p>
+      <p class="tagline" id="tagline">Your phone is the racket. Swing it.</p>
     </header>
 
     <!-- home: the four mode cards -->
@@ -105,8 +106,9 @@
     <!-- settings -->
     <div class="panel-settings sheet narrow" data-panel-id="settings" hidden>
       <p class="eyebrow">Settings</p>
-      <h2 class="h1">Display and sound</h2>
+      <h2 class="h1">Control, display and sound</h2>
       <div class="opt-list">
+        <button class="opt" data-nav data-set="control"><span>Control<small>Phone racket: swing the phone. Body camera: prop it up and swing your arm.</small></span><b id="set-control">Phone racket</b></button>
         <button class="opt" data-nav data-set="gfx"><span>Graphics<small>Basic runs faster on older laptops</small></span><b id="set-gfx">High</b></button>
         <button class="opt" data-nav data-set="sound"><span>Sound</span><b id="set-sound">On</b></button>
         <button class="opt" data-nav data-set="music"><span>Music</span><b id="set-music">Off</b></button>
@@ -119,7 +121,7 @@
       <div class="qr-wrap"><div id="qr" class="qr is-empty" aria-hidden="true"></div></div>
       <div class="pb-text">
         <p class="pb-title">Connect your phone</p>
-        <p class="pb-how">Scan the code, or open <b id="phone-url">phone.html</b> and type the code. Prop it up 2–3 m away, whole body in view.</p>
+        <p class="pb-how" id="pb-how">Scan the code, or open <b id="phone-url">phone.html</b> and type the code. Hold your phone like a racket. 2 players = 2 phones.</p>
       </div>
       <div class="pb-code">
         <span class="label">Code</span>
@@ -135,17 +137,17 @@
   </section>
 
   <!-- CALIBRATION -->
-  <section id="cal" class="screen overlay" aria-label="Camera setup" hidden>
+  <section id="cal" class="screen overlay" aria-label="Phone setup" hidden>
     <div class="panel cal-panel">
-      <p class="eyebrow">Body camera</p>
-      <h2 class="h1">Camera setup</h2>
+      <p class="eyebrow" id="cal-eyebrow">Phone racket</p>
+      <h2 class="h1" id="cal-title">Phone setup</h2>
       <p class="sub" id="cal-sub">Follow the steps on your phone. This screen shows what it picks up.</p>
       <ol class="steps" id="cal-steps">
         <li data-step="1"><span class="tick" aria-hidden="true"></span>Phone connected</li>
-        <li data-step="2"><span class="tick" aria-hidden="true"></span>Camera on, body tracking loaded</li>
-        <li data-step="3"><span class="tick" aria-hidden="true"></span>Whole body in view</li>
-        <li data-step="4"><span class="tick" aria-hidden="true"></span>Racket hand raised above the head</li>
-        <li data-step="5"><span class="tick" aria-hidden="true"></span>Wind up and swing a forehand</li>
+        <li data-step="2"><span class="tick" aria-hidden="true"></span>Motion sensors on</li>
+        <li data-step="3"><span class="tick" aria-hidden="true"></span>Hold still, racket head up</li>
+        <li data-step="4"><span class="tick" aria-hidden="true"></span>Practise a forehand</li>
+        <li data-step="5"><span class="tick" aria-hidden="true"></span>Practise a backhand</li>
       </ol>
       <div class="meter" aria-hidden="true"><span>Left</span><div class="meter-track"><div id="cal-dot" class="meter-dot"></div></div><span>Right</span></div>
       <p id="cal-msg" class="cal-msg" aria-live="polite">Waiting for your phone…</p>

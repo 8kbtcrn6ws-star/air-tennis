@@ -1,12 +1,19 @@
-// Air Tennis phone page: the phone is a body-tracking camera. Stand it up 2-3 m from the players (1 or 2 people);
-// MediaPipe PoseLandmarker runs on the phone and only small packets go to the TV:
-// {t:"pos"} ~30 Hz per player and {t:"swing"} events. Video never leaves the phone.
+// Air Tennis phone page. Two controls (the TV's Settings > Control picks one; the phone can switch too):
+//  - Phone racket (default): hold the phone like a racket and swing it. DeviceMotion (gyro + accelerometer) is read on
+//    the phone (racket.js) and only {t:"swing"} events go to the TV, with the same ago/c/n timing fields as the camera.
+//  - Body camera: stand the phone up 2-3 m from the players (1 or 2 people); MediaPipe PoseLandmarker runs on the
+//    phone and only small packets go to the TV: {t:"pos"} ~30 Hz per player and {t:"swing"} events.
+// Nothing is recorded or stored. Video never leaves the phone.
 import { PhoneClient, normalizeCode } from "./net.js";
 import { personFrom, createPoseSwingDetector, createPoseTracker, raisedHand, slotX, POSE_THRESH } from "./pose.js";
+import { createRacketDetector, createStillCheck, sampleFromEvent } from "./racket.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
-const TEST = params.get("test") === "1"; // headless tests only: no PeerJS, packets go to window.__phone.sent
+const TEST = params.get("test") === "1"; // headless tests only: packets also go to window.__phone.sent
+// Tests: TEST alone = no link at all. link=relay = really connect, straight to the relay; link=auto = direct, then relay.
+const LINK = TEST ? params.get("link") : "auto";
+const CONTROL_PARAM = ["racket", "body"].includes(params.get("control")) ? params.get("control") : null;
 const MP_VER = "0.10.14";
 // Tests only: the headless box runs pose tracking at ~3 fps, so the fake camera clip is played in slow motion
 // and the pose code runs on matching slowed-down time (slowmo=6 -> 1 real second = 1/6 s of movement).
@@ -22,14 +29,14 @@ const latPush = (k, v) => { if (lat && Number.isFinite(v)) { lat[k].push(Math.ro
 
 const client = new PhoneClient();
 const sent = [];
-const state = { view: "join", mode: null, step: 0, connected: false, sens: "normal", camReady: false, error: null, loading: "" };
+const state = { view: "join", mode: null, step: 0, connected: false, sens: "normal", camReady: false, error: null, loading: "", control: CONTROL_PARAM || "racket", via: "" };
 let video = null;
 let ctx2d = null;
 let lastVideoTime = -1;
 const round = (v) => Math.round(v * 1000) / 1000;
 
 function send(msg) {
-  if (TEST) { sent.push({ ...msg, at: performance.now() }); if (sent.length > 2000) sent.shift(); return; }
+  if (TEST) { sent.push({ ...msg, at: performance.now() }); if (sent.length > 2000) sent.shift(); if (!LINK) return; }
   if (state.connected) client.send(msg);
 }
 
@@ -37,7 +44,7 @@ function chip(id, st, text) { const c = $(id); c.dataset.state = st; if (text) c
 function show(view) {
   state.view = view;
   document.body.dataset.view = view;
-  for (const v of ["join", "start", "play"]) $("v-" + v).hidden = v !== view;
+  for (const v of ["join", "start", "play", "racket-start", "racket"]) $("v-" + v).hidden = v !== view;
 }
 function buzz(ms) { try { navigator.vibrate?.(ms); } catch { /* iPhone: no vibration API, skip */ } }
 
@@ -50,10 +57,12 @@ async function join(code) {
   $("join-err").textContent = "";
   chip("chip-link", "wait", "Connecting");
   try {
-    if (!TEST) await client.connect(code);
+    if (LINK) { const r = await client.connect(code, { relay: LINK === "relay" }); state.via = r.via; }
     state.connected = true;
-    chip("chip-link", "ok", "TV " + normalizeCode(code));
-    show("start"); // iPhone Safari needs a tap before the camera can start
+    chip("chip-link", "ok", "TV " + normalizeCode(code) + (state.via === "relay" ? " · relay" : ""));
+    // iPhone Safari needs a tap before the camera or the motion sensors can start.
+    show(state.control === "body" ? "start" : "racket-start");
+    keepAlive();
   } catch (err) {
     chip("chip-link", "bad", "TV");
     $("join-err").textContent = err?.message || "Couldn't reach the TV. Check the code.";
@@ -67,6 +76,8 @@ $("join-form").addEventListener("submit", (e) => {
 });
 client.on("message", (m) => {
   if (m.t === "cfg" && ["easier", "normal", "harder"].includes(m.sens)) setSens(m.sens);
+  if (m.t === "cfg" && ["racket", "body"].includes(m.control)) applyControl(m.control);
+  if (m.t === "buzz" && state.mode === "racket") { if (m.k === "hit" && (m.p === undefined || racket.players.includes(m.p))) onRacketHit(); return; }
   if (m.t === "buzz" && (m.p === undefined || !body.players.length || body.players.includes(m.p))) buzz(m.k === "hit" ? 25 : 12);
   if (m.t === "slots") onSlots(m);
 });
@@ -88,10 +99,11 @@ function setSens(v) {
   state.sens = v;
   $("sens").value = v;
   for (const d of body.dets) d.setThreshold(POSE_THRESH[v]);
+  racket.det.setSens(v);
 }
 $("sens").addEventListener("change", (e) => setSens(e.target.value));
 document.querySelectorAll("[data-menu]").forEach((b) => b.addEventListener("click", () => send({ t: "menu", k: b.dataset.menu })));
-$("recal").addEventListener("click", () => { if (state.mode === "body") beginBodyCal(); });
+$("recal").addEventListener("click", () => { if (state.mode === "body") beginBodyCal(); else if (state.mode === "racket") beginRacketCal(); });
 function paintMeter(x) { $("meter-dot").style.left = ((x + 1) * 50) + "%"; }
 
 // ---------- camera errors, in words a person can act on ----------
@@ -198,6 +210,7 @@ function beginBodyCal() {
 }
 function slotName(s) { return body.players[s] !== undefined ? body.players[s] + 1 : s + 1; }
 function onSlots(m) {
+  if (state.mode === "racket") return racketSlots(m);
   if (m.error) { setStep(state.step, "TV is full", "This TV already has 2 camera phones connected."); return; }
   body.players = m.p || [];
   const line = $("slot-line");
@@ -355,14 +368,157 @@ $("skip-cal").addEventListener("click", () => { if (state.mode === "body") finis
 $("flip-cam").addEventListener("click", async () => { if (state.mode !== "body" || NOCAM) return; body.facing = body.facing === "user" ? "environment" : "user"; try { await openCamera(); } catch (e) { state.error = String(e?.message || e); } });
 for (const s of [0, 1]) $("hand-" + s).addEventListener("click", () => { const d = body.dets[s]; if (!d) return; d.setHand(d.config.hand === "right" ? "left" : "right"); paintHands(); });
 
+// ---------- the phone racket (default control) ----------
+// One phone = one player. Setup: hold still (reads which way gravity points: iPhone and Android differ), practise a
+// forehand (learns which way your forehand spins, so left-handers and any grip work), practise a backhand. Then every
+// swing goes to the TV at once with ago = ms since the peak of the swing (the contact moment).
+const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const racket = { det: createRacketDetector({ gSign: IOS ? -1 : 1, enabled: false }), still: createStillCheck(), cal: null, players: [], n: 0, samples: 0, last: null, listening: false, firstSample: 0 };
+const KIND_NAME = { fh: "Forehand", bh: "Backhand", oh: "Smash", sv: "Serve" };
+function applyControl(c) {
+  if (CONTROL_PARAM || state.mode) { state.control = state.control || c; return; } // already playing: keep it
+  state.control = c;
+  if (state.view === "racket-start" && c === "body") show("start");
+  if (state.view === "start" && c === "racket") show("racket-start");
+}
+function setRacketStep(n, title, help) {
+  state.step = n;
+  $("r-step-label").textContent = n >= 5 ? "Ready" : `Setup · step ${Math.min(n + 1, 5)} of 5`;
+  $("r-step-title").textContent = title;
+  $("r-step-help").textContent = help || "";
+  document.body.dataset.step = String(n);
+  document.body.toggleAttribute("data-ready", n >= 5);
+  [...$("racket-dots").children].forEach((d, i) => { d.classList.toggle("done", n > i + 2 || n >= 5); d.classList.toggle("now", n < 5 && n === i + 2); });
+  send({ t: "cal", step: n });
+}
+function motionError(kind) {
+  if (kind === "denied") return "Motion access is off. Reload this page and tap Allow when your phone asks. On iPhone, if it never asks: close the tab, open the link again, then tap Start racket.";
+  if (kind === "none") return "This phone isn't sending motion readings. Open the page in Safari (iPhone) or Chrome (Android), or use the body camera instead.";
+  if (!window.isSecureContext) return "Motion sensors only work on the https:// address of Air Tennis.";
+  return "Couldn't start the motion sensors.";
+}
+// Must run from the Start racket tap: iOS 13+ only shows the motion prompts from a user gesture.
+async function startRacket() {
+  $("racket-err").textContent = "";
+  $("racket-btn").disabled = true;
+  try {
+    if (!("DeviceMotionEvent" in window)) throw Object.assign(new Error("none"), { kind: "none" });
+    const asks = [];
+    if (typeof DeviceMotionEvent.requestPermission === "function") asks.push(DeviceMotionEvent.requestPermission());
+    if (typeof window.DeviceOrientationEvent?.requestPermission === "function") asks.push(DeviceOrientationEvent.requestPermission());
+    const res = await Promise.all(asks.map((a) => a.catch(() => "denied")));
+    if (res.some((r) => r !== "granted")) throw Object.assign(new Error("denied"), { kind: "denied" });
+    if (!racket.listening) { window.addEventListener("devicemotion", onMotion); racket.listening = true; }
+    // Real phones send readings at once. Headless tests feed them later, so they don't wait here.
+    if (!TEST) {
+      const t0 = performance.now();
+      while (!racket.samples && performance.now() - t0 < 1500) await new Promise((r) => setTimeout(r, 100));
+      if (!racket.samples) throw Object.assign(new Error("none"), { kind: "none" });
+    }
+    state.mode = "racket";
+    state.control = "racket";
+    send({ t: "mode", m: "racket" });
+    $("racket-remote-slot").appendChild($("remote"));
+    show("racket");
+    chip("chip-motion", "ok", "Motion");
+    keepAwake();
+    beginRacketCal();
+  } catch (err) {
+    state.error = motionError(err?.kind);
+    chip("chip-motion", "bad", "Motion");
+    $("racket-err").textContent = state.error;
+    $("racket-btn").textContent = "Try again";
+    show("racket-start");
+  } finally {
+    $("racket-btn").disabled = false;
+  }
+}
+function beginRacketCal() {
+  racket.cal = "still";
+  racket.still.reset();
+  racket.det.setEnabled(false);
+  setRacketStep(2, "Hold still", "Hold the phone like a racket, top pointing up, and keep it still for a moment.");
+}
+function finishRacketCal() {
+  racket.cal = "done";
+  racket.det.setEnabled(true);
+  setRacketStep(5, "You're ready!", "Swing the phone to hit: forehand, backhand, or over your head to smash and serve. Your player runs to the ball.");
+  paintHit("Ready", 0, racket.players.length ? `You're Player ${racket.players[0] + 1}. Swing when the ball comes to you.` : "Swing when the ball comes to you.");
+}
+function paintHit(kind, power, sub) {
+  $("hit-kind").textContent = kind;
+  $("power-fill").style.width = Math.round(power * 100) + "%";
+  if (sub !== undefined) $("hit-sub").textContent = sub;
+}
+function onRacketHit() {
+  buzz(30); // Android only; iPhones have no vibration for web pages
+  const c = $("hit-card");
+  c.classList.add("is-hit");
+  $("hit-sub").textContent = "Hit!";
+  setTimeout(() => c.classList.remove("is-hit"), 300);
+}
+function racketSlots(m) {
+  if (m.error) { setRacketStep(state.step, "TV is full", "This TV already has 4 players."); return; }
+  racket.players = m.p || [];
+  const line = $("r-slot-line");
+  line.hidden = !racket.players.length;
+  if (racket.players.length) line.innerHTML = `You are <b>Player ${racket.players[0] + 1}</b>`;
+  if (racket.cal === "done") paintHit($("hit-kind").textContent, 0, `You're Player ${racket.players[0] + 1}. Swing when the ball comes to you.`);
+}
+function onMotion(e) { handleMotion(sampleFromEvent(e)); }
+// One motion sample -> setup steps and swings. Also used by the tests (through real devicemotion events).
+function handleMotion(s) {
+  racket.samples++;
+  if (state.mode !== "racket") return;
+  if (racket.cal === "still") {
+    if (racket.still.push(s)) {
+      const g = racket.still.gravitySign;
+      if (g) racket.det.setGravitySign(g);
+      racket.cal = "fh";
+      racket.det.setEnabled(true);
+      setRacketStep(3, "Swing a forehand", "Take the phone back on your racket side, then swing it forward through the ball.");
+    }
+    return;
+  }
+  const sw = racket.det.push(s);
+  if (!sw) return;
+  racket.last = sw;
+  if (racket.cal === "fh") {
+    if (sw.kind === "oh" || sw.kind === "sv") { $("r-step-help").textContent = "That went over the top. Swing level, side-on, like a forehand."; return; }
+    racket.det.calibrateForehand(sw);
+    racket.cal = "bh";
+    setRacketStep(4, "Now a backhand", "Take the phone back across your body, then swing it out the other way.");
+    return;
+  }
+  if (racket.cal === "bh") {
+    if (sw.kind === "bh") { finishRacketCal(); return; }
+    $("r-step-help").textContent = sw.kind === "fh" ? "That was a forehand again. Swing across your body the other way." : "That went over the top. Swing level, across your body.";
+    return;
+  }
+  if (racket.cal !== "done") return;
+  racket.n++;
+  // Sent at once from the sensor event: no batching. ago = how long ago the peak (contact) was.
+  const ago = Math.max(0, Math.min(300, Math.round(performance.now() - sw.peakT)));
+  send({ t: "swing", dir: sw.dir, spd: sw.power, k: sw.kind, lift: sw.lift, ago, c: sw.c, n: racket.n });
+  paintHit(KIND_NAME[sw.kind], sw.power, `Power ${Math.round(sw.power * 100)}%`);
+}
+$("racket-btn").addEventListener("click", () => startRacket());
+$("r-skip").addEventListener("click", () => { if (state.mode === "racket") finishRacketCal(); });
+$("use-body").addEventListener("click", () => { state.control = "body"; show("start"); });
+$("use-racket").addEventListener("click", () => { state.control = "racket"; show("racket-start"); });
+
 // ---------- misc ----------
+// Small ping so the TV knows a quiet racket phone (or a relay phone) is still there.
+let aliveTimer = null;
+function keepAlive() { clearInterval(aliveTimer); aliveTimer = setInterval(() => { if (state.connected && (!TEST || LINK)) client.send({ t: "ping" }); }, 1500); }
+window.addEventListener("pagehide", () => { if (state.connected && (!TEST || LINK)) client.close(); });
 let wakeLock = null;
 async function keepAwake() { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch { /* optional */ } }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state.mode) keepAwake(); });
 $("start-btn").addEventListener("click", () => startBody());
 
 // Hidden test hook (not shown anywhere on the page).
-window.__phone = { state, sent, join, body, startBody, lat, feedPoses: (list, t, worlds) => handlePoses(list, t ?? performance.now(), worlds), onMessage: (m) => client.emit("message", m) };
+window.__phone = { state, sent, join, body, startBody, racket, startRacket, lat, feedPoses: (list, t, worlds) => handlePoses(list, t ?? performance.now(), worlds), onMessage: (m) => client.emit("message", m), get via() { return client.mode; } };
 
 const initial = codeFromLocation();
 if (initial) { $("code").value = initial; join(initial); }
